@@ -12,12 +12,33 @@ Skills are slash commands (`/skillname`) that give Claude Code a structured, reu
 
 ## Skills
 
-### [`/preserve`](./preserve/) — Project Preservation Scanner
+### [`/triage`](./triage/) — Personal Archive Triager
 
-Scans every file in a project directory and produces a `preservation-report.md` identifying the content most worth saving before it gets deleted or lost.
+Maps a large collection of mixed personal data and projects using filesystem metadata only — no file reading. Assigns every directory a disposition and produces a prioritized action plan.
 
 **Use it when:**
-- About to delete or archive a project
+- You have GBs of projects and data to sort through before a cleanup
+- You want to know what should go on GitHub (public vs private), what to cloud-backup, and what to delete
+- You can't manually map the structure yourself
+
+**What it does:**
+1. Builds a size map of all top-level directories
+2. Detects code project roots (git, package.json, Cargo.toml, etc.)
+3. Classifies non-project directories (media, docs, backups, junk)
+4. Detects cleanable junk (orphaned node_modules, build artifacts, caches)
+5. Assigns each item a disposition: GitHub Public / GitHub Private / Cloud Storage / Delete / needs `/preserve` / Manual Review
+6. Writes `triage-report.md` with a full action plan and recoverable space estimate
+
+**Works on any size collection** — metadata-only scan means it handles 10GB or 100GB in the same time.
+
+---
+
+### [`/preserve`](./preserve/) — Project Preservation Scanner
+
+Scans every file in a single project directory and produces a `preservation-report.md` identifying the content most worth saving before it gets deleted or lost.
+
+**Use it when:**
+- About to delete or archive a specific project
 - Migrating or handing off a codebase
 - Wanting to audit what unique knowledge, algorithms, or design decisions live in the code
 
@@ -28,42 +49,41 @@ Scans every file in a project directory and produces a `preservation-report.md` 
 4. Ranks findings and selects the TOP 10 most valuable items
 5. Writes a structured `preservation-report.md` with key snippets and specific preservation actions
 
-**Example output:** TOP 10 with score breakdowns, full inventory tables, skipped/unreadable file lists, and a summary of what makes the project unique.
+**Typical workflow:** run `/triage` on the whole archive first to find which projects need attention, then run `/preserve` on each flagged project for a deep content scan.
 
 ---
 
 ## Install
 
-**One-liner (single skill):**
+**One-liner:**
 ```bash
+# Install both skills
+curl -fsSL https://raw.githubusercontent.com/ramic-dev/claude-code-skills/main/install.sh | bash -s triage preserve
+
+# Install individually
+curl -fsSL https://raw.githubusercontent.com/ramic-dev/claude-code-skills/main/install.sh | bash -s triage
 curl -fsSL https://raw.githubusercontent.com/ramic-dev/claude-code-skills/main/install.sh | bash -s preserve
 ```
 
 **From a local clone:**
 ```bash
 git clone https://github.com/ramic-dev/claude-code-skills.git
-bash claude-code-skills/install.sh preserve
+bash claude-code-skills/install.sh triage preserve
 ```
 
-**Manual:**
-```bash
-mkdir -p ~/.claude/skills/preserve
-curl -fsSL https://raw.githubusercontent.com/ramic-dev/claude-code-skills/main/preserve/SKILL.md \
-  -o ~/.claude/skills/preserve/SKILL.md
-```
-
-Then open a new Claude Code session and type `/preserve` in any project directory.
+Then open a new Claude Code session and type `/triage` or `/preserve`.
 
 ---
 
 ## Usage
 
 ```
-/preserve                    # scan current directory
-/preserve /path/to/project   # scan a specific path
-```
+/triage                        # triage current directory
+/triage /path/to/my/archive    # triage a specific path
 
-The report is written to `preservation-report.md` in the scanned directory. Subsequent runs archive the previous report automatically.
+/preserve                      # scan current project
+/preserve /path/to/project     # scan a specific project
+```
 
 ---
 
@@ -72,9 +92,11 @@ The report is written to `preservation-report.md` in the scanned directory. Subs
 ```
 claude-code-skills/
 ├── install.sh
+├── triage/
+│   └── SKILL.md
 ├── preserve/
-│   ├── SKILL.md              ← skill prompt (copy this to ~/.claude/skills/preserve/)
+│   ├── SKILL.md
 │   └── docs/
-│       └── binary-extensions.md  ← extension classification reference
+│       └── binary-extensions.md
 └── ...
 ```
