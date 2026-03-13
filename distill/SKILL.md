@@ -4,14 +4,15 @@ description: Extract and document all unique ideas, algorithms, patterns, and no
   knowledge from a project into atomic knowledge notes. Unlike /preserve (which saves
   files), /distill saves concepts — the reasoning, decisions, and insights that cannot
   be reconstructed from scratch. Each concept becomes a separate markdown file with
-  YAML frontmatter (novelty 1-3, found_in as tag list, see_also links), stored flat
-  in a notes/ folder inside the vault, compatible with Obsidian + Dataview. Supports
-  multiple passes and cross-project deduplication: if the same concept appears in two
-  projects, one canonical note grows with found_in rather than duplicating.
-version: 9.0.0
+  YAML frontmatter (novelty/applicability/reusability 1-3, composite score 0-10,
+  found_in as tag list, see_also links), stored flat in a notes/ folder inside the
+  vault, compatible with Obsidian + Dataview. Supports multiple passes and
+  cross-project deduplication: if the same concept appears in two projects, one
+  canonical note grows with found_in rather than duplicating.
+version: 10.0.0
 context: fork
 agent: general-purpose
-allowed-tools: Read, Grep, Glob, Bash, Write
+allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 argument-hint: [path] [output-vault]
 ---
 
@@ -34,7 +35,7 @@ The skill creates only `notes/` and `_index/`. Everything else is managed by the
 
 Work through all 8 phases autonomously. Never ask clarifying questions.
 
-**If context pressure forces abbreviation**, write notes extracted so far, then the index. Never skip Phase 1 or 8.
+**If context pressure forces abbreviation**, write notes extracted so far, then the index. Never skip Phase 1 or 8. In the console output and in the Storico row, mark the pass as incomplete: append `(parziale — N/TOT file letti)` to the row date and print a warning line: `⚠ Passata incompleta: solo N file su TOT processati. Riesegui /distill per continuare.`
 
 ---
 
@@ -64,19 +65,28 @@ mkdir -p "<VAULT_PATH>/_index"
 - Extract all existing rows from the Storico table → store as `STORICO_ROWS`
 - If file does not exist: `FIRST_DISTILLED = today`, `LAST_PASS = 0`, `EXISTING_STATUS = none`, `STORICO_ROWS = []`
 
-**Load existing notes** — read every `.md` in `<VAULT_PATH>/notes/`:
+**Load existing notes** — build `KNOWN_NOTES` from a lightweight grep index (do NOT read every file — too slow and context-heavy):
 ```bash
-ls "<VAULT_PATH>/notes/" 2>/dev/null
+# Titles (slug → title)
+grep -rh "^title:" "<VAULT_PATH>/notes/" 2>/dev/null
+
+# found_in per note (slug → projects)
+grep -rh "^found_in:" "<VAULT_PATH>/notes/" 2>/dev/null
+
+# categories and scores
+grep -rh "^\(category\|score\|novelty\|applicability\|reusability\):" "<VAULT_PATH>/notes/" 2>/dev/null
 ```
-For each file, read it and extract:
-- `title` from frontmatter + first 2 lines of body → add to `KNOWN_NOTES` map (filename → {title, summary, found_in, tags, category})
-- Find notes where `found_in` contains `PROJECT_NAME` → collect their `pass` values
+Build `KNOWN_NOTES` map (slug → {title, found_in, category, score}) from grep output alone — without opening individual files. Only open a specific note file if you need to verify a potential FOUND_IN/EXTEND match during Phase 4.
+
+**CRITICAL:** `KNOWN_NOTES` must be complete before Phase 4 begins. Any concept you extract will be checked against it to prevent duplicates. An incomplete KNOWN_NOTES is the primary cause of duplicate notes across sessions.
+
+**Context compression recovery:** if you are resuming after context compression and no longer have the Phase 1 grep results in memory, re-run all three grep commands above before proceeding to Phase 4. Do not rely on remembered note titles — re-run the grep.
 
 `CURRENT_PASS = LAST_PASS + 1`.
+`N_VAULT_TOTAL` = total entries in KNOWN_NOTES.
+`N_PROJECT_NOTES` = entries in KNOWN_NOTES where `found_in` contains `PROJECT_NAME`.
 
-If `LAST_PASS` was read from the index (preferred), use that. Fall back to max `pass` value among notes only if no index exists.
-
-Print: `Passata N | Note vault totali: N | Già da questo progetto: N | Vault: VAULT_PATH`
+Print: `Passata N | Note vault totali: N_VAULT_TOTAL | Già da questo progetto: N_PROJECT_NOTES | Vault: VAULT_PATH`
 
 ---
 
@@ -98,7 +108,8 @@ find "<ROOT>" -type f \
 ```
 
 **Partition:**
-- **SKIP:** lock files, minified (`*.min.js *.min.css`), source maps (`*.map`), empty files, auto-generated (first 8 lines: `THIS FILE IS AUTO-GENERATED` / `DO NOT EDIT` / `@generated`), licenses (`LICENSE* COPYING*`), fonts (`.ttf .otf .woff .woff2`), compiled (`.o .pyc .class`)
+- **SKIP:** lock files, minified (`*.min.js *.min.css`), source maps (`*.map`), empty files, auto-generated (first 8 lines: `THIS FILE IS AUTO-GENERATED` / `DO NOT EDIT` / `@generated`), licenses (`LICENSE* COPYING*`), fonts (`.ttf .otf .woff .woff2`), compiled (`.o .pyc .class`), vector graphics (`.svg`), data files (`.csv .tsv` >10KB, all `.sql` files), binary-embedded XML (`.xlsx .docx .pptx`)
+  - Size check: `wc -c < "<path>" 2>/dev/null` → if result >10240 → SKIP
 - **NATIVE:** `.pdf .jpg .jpeg .png .webp .gif`
 - **Unknown extension:** `head -c 512 "<path>" 2>/dev/null | LC_ALL=C grep -cP '\x00'` → 0 = TEXT, >0 = SKIP
 - **TEXT:** everything else
@@ -153,17 +164,24 @@ Files matching multiple signals → read first.
 
 For each file, ask: **"Would a competent developer say 'obvious' or 'interesting — I wouldn't have thought of that'?"**
 
-If *interesting* → extract and assign novelty. If *obvious* → skip.
+If *interesting* → extract and assign scores (novelty, applicability, reusability). If *obvious* → skip.
 
-### Novelty scale (1–3)
+### Dimensioni del punteggio (tutte su scala 1–3)
 
-| Score | Calibration |
-|-------|-------------|
-| `1` | Interessante: non-standard ma derivabile — un esperto ci arriva da solo con un po' di tempo |
-| `2` | Non-ovvio: richiede esperienza specifica, conoscenza di dominio, o un insight creativo |
-| `3` | Raro: difficile da riscoprire indipendentemente; improbabile senza aver affrontato esattamente questo problema |
+| Campo | 1 | 2 | 3 |
+|-------|---|---|---|
+| `novelty` | Interessante: non-standard ma derivabile — un esperto ci arriva da solo con un po' di tempo. *Es: usare `Date.now()` come ID univoco.* | Non-ovvio: richiede esperienza specifica, conoscenza di dominio, o un insight creativo. *Es: propagazione AC-3 via BFS in WFC, not DFS.* | Raro: difficile da riscoprire indipendentemente; improbabile senza aver affrontato esattamente questo problema. *Es: ticket smuggling via sottoclasse InetSocketAddress per bypassare API Minecraft.* |
+| `applicability` | Nicchia/contestuale — funziona solo in questo progetto per ragioni specifiche (es. workaround per un bug di una versione specifica di una libreria). *Es: patch per comportamento rotto di Drupal 9.3.x.* | Dominio-specifico — utile in qualsiasi progetto dello stesso tipo (es. pattern Drupal, ottimizzazione React). *Es: buffered debug log con flush differito in Godot Autoload.* | Cross-dominio — applicabile in qualsiasi progetto software indipendentemente da stack o dominio. *Es: CORS bridge via Chrome extension service worker; JSON extraction da output LLM.* |
+| `reusability` | Adattamento pesante — richiede riscrittura significativa per adattarsi a un nuovo contesto (es. hardcoded su struttura dati o API specifica). *Es: algoritmo legato a schema DB proprietario.* | Adattamento leggero — richiede modifiche minori a parametri o nomi (es. sostituire un endpoint, cambiare una soglia). *Es: dead reckoning con costanti di interpolazione da tunare.* | Drop-in — incollabile direttamente in un nuovo progetto senza modifiche o con sole sostituzioni meccaniche di nomi. *Es: `rngFromSeed` (FNV-1a + SFC32); `withLock` via flock su file temp.* |
 
-When uncertain between two scores, assign the lower.
+When uncertain between two scores on **any dimension**, assign the lower. **The `3` level requires a concrete justification you could defend aloud** — if you hesitate, it's a `2`.
+
+**Formula composita (pesi AHP, priorità pratica):**
+```
+score = round(((novelty-1)*0.45 + (applicability-1)*0.35 + (reusability-1)*0.20) / 2 * 10)
+```
+- Minimo (1,1,1) → 0 | Medio (2,2,2) → 5 | Massimo (3,3,3) → 10
+- `score` è sempre un intero (0–10). Mai scrivere `5.0` o `7.5` — `round()` produce sempre un intero.
 
 ### Categories
 
@@ -200,7 +218,7 @@ Compare each extracted concept against ALL notes in `KNOWN_NOTES` (entire vault,
 - Action: `SKIP`
 
 **Case C — Same concept, same project, new details found:**
-- Action: `EXTEND` — append `## Integrazione (YYYY-MM-DD)` section, update `updated`, raise `novelty` if justified
+- Action: `EXTEND` — append `## Integrazione (YYYY-MM-DD)` section, update `updated`, raise any score dimension (`novelty`, `applicability`, `reusability`) if the new information justifies it, recalculate `score`
 
 **Case D — Same concept found in a different project** (title/description matches existing note from another project):
 - Action: `FOUND_IN` — add `PROJECT_NAME` to the existing note's `found_in` array, add current `source` to `source` field, optionally append a one-line context note under `## Visto anche in (PROJECT_NAME)` if the usage context differs meaningfully
@@ -218,7 +236,7 @@ View each NATIVE file with Read tool. Extract a note only if the file contains o
 
 ## Phase 6 — Deduplication Pass
 
-After extracting all concepts: if two newly-extracted concepts describe the same idea → merge into one, listing both sources.
+After extracting all concepts: if two newly-extracted concepts describe the same idea → merge into one `CREATE`. The merged note uses the more descriptive title; the `source` list is the union of the two source file paths.
 
 ---
 
@@ -228,23 +246,26 @@ Classify each concept: `CREATE` / `EXTEND` / `FOUND_IN` / `SKIP`. Count each.
 
 **For every concept marked CREATE or EXTEND**, build `see_also`:
 - Compare the concept's title, category, and tags against all `KNOWN_NOTES`
-- If a note in the vault is conceptually related (same domain, complementary mechanism, or prerequisite knowledge) → add its slug (without `.md`) to `see_also` as a wikilink: `"[[slug]]"`
+- If a note in the vault is conceptually related (same domain, complementary mechanism, or prerequisite knowledge) → add its plain slug (without `.md`, without brackets) to `see_also`. Wikilinks go only in the note body — frontmatter slugs must be plain strings for Dataview queries.
 - Also cross-link concepts extracted in this same pass if they are related
-- Limit: max 5 entries. If none are relevant, leave `[]`.
+- Limit: max 5 entries. If more than 5 are relevant, prefer in order: (1) stessa `category`, (2) `score` più alto, (3) ordine alfabetico per slug. Se nessun candidato → ometti il campo `see_also` e la riga `Vedi anche` interamente (non scrivere `[]`).
 
 ---
 
 ## Phase 8 — Write Files & Update Index
 
-**Filename:** `<concept-slug>.md` (kebab-case, max 60 chars). No project suffix — notes are canonical across projects.
+**Filename:** `<concept-slug>.md` (kebab-case, max 60 chars). No project suffix — notes are canonical across projects. If a slug already exists in the vault for a *different* concept (different title/meaning), append `-2`, `-3`, etc. until unique. If the slug exists for the *same* concept → it's a FOUND_IN or EXTEND case, not a collision.
 
 **New notes (CREATE):** one Write call per file to `<VAULT_PATH>/notes/<filename>.md`:
 
 ```markdown
 ---
 title: "[Titolo conciso — l'idea, non il file]"
-category: algoritmo | pattern-architetturale | hack | conoscenza-di-dominio | decisione | frammento
+category: CATEGORY
 novelty: 1-3
+applicability: 1-3
+reusability: 1-3
+score: 0-10
 found_in: [PROJECT_NAME]
 source: [relative/path/to/file.ext]
 tags: [tag1, tag2, PROJECT_TAG]
@@ -259,20 +280,21 @@ pass: CURRENT_PASS
 **Perché non-ovvio:** [Alternativa default e perché questa è diversa.]
 
 **Ricostruzione:**
-[Pseudocodice ≤8 righe, o ometti se la descrizione basta.]
+[Pseudocodice ≤8 righe. Obbligatorio per `algoritmo` e `frammento`. Opzionale per `hack` (includi se la sequenza è non-ovvia). Ometti per `conoscenza-di-dominio` e `decisione` (la prosa è sufficiente).]
 
 **Quando riapplicare:** [Una frase: in quale scenario futuro questa soluzione torna utile. Ometti per `frammento` e `conoscenza-di-dominio`.]
 
 ---
 *Vedi anche: [[related-slug]] · [[other-slug]]*
 ```
+(Se nessun candidato: ometti sia `see_also` dal frontmatter che la riga `Vedi anche` dal corpo)
 
 Note:
+- `CATEGORY`: scegli uno tra `algoritmo`, `pattern-architetturale`, `hack`, `conoscenza-di-dominio`, `decisione`, `frammento`
 - `source` is always a YAML list (even with one item) — avoids type mutation on future FOUND_IN updates
 - `tags` always ends with `PROJECT_TAG` — enables Obsidian tag panel navigation by project
 - `see_also` in frontmatter: plain slugs (no brackets) — for Dataview queries
 - `Vedi anche` line in body: `[[wikilinks]]` — creates real Obsidian graph edges and clickable links
-- Omit both `see_also` field and `Vedi anche` line entirely if no related notes exist
 
 **Extended notes (EXTEND):** append to existing file:
 ```markdown
@@ -280,12 +302,12 @@ Note:
 ## Integrazione (YYYY-MM-DD) — passata CURRENT_PASS
 [Solo le informazioni nuove.]
 ```
-Update frontmatter: `updated: YYYY-MM-DD`. Raise `novelty` if justified. Add `PROJECT_TAG` to `tags` if not already present.
+Update frontmatter: `updated: YYYY-MM-DD`. Raise any score dimension (`novelty`, `applicability`, `reusability`) if the new information justifies it; recalculate `score` if any dimension changes. Add `PROJECT_TAG` to `tags` if not already present. If note is missing `applicability`, `reusability`, or `score`, add them now (estimated from context).
 
 **Cross-project notes (FOUND_IN):** update existing file frontmatter:
-- Add `PROJECT_NAME` to `found_in` array
+- Add `PROJECT_NAME` to `found_in` array if not already present
 - Add `PROJECT_TAG` to `tags` array if not already present
-- Add current source path to `source` list
+- Add current source path to `source` list if not already present
 - Update `updated: YYYY-MM-DD`
 - If usage context differs meaningfully, append:
 ```markdown
@@ -296,34 +318,43 @@ Update frontmatter: `updated: YYYY-MM-DD`. Raise `novelty` if justified. Add `PR
 
 **Project index** — Write `<VAULT_PATH>/_index/<PROJECT_NAME>.md`:
 
-On **first pass** (no existing index): create from scratch, `status: wip`.
-On **subsequent passes**: preserve `first_distilled` from `FIRST_DISTILLED`, preserve `status` from `EXISTING_STATUS` (never reset a user's `review` or `done` to `wip`), append the new row to `STORICO_ROWS`.
+**BEFORE writing:** always check if the index file already exists and read it first. Never blindly overwrite an index with `cat >` or similar — it destroys previous pass history and concept counts. If the file exists, use Edit to update specific fields (passes, concepts, updated, Storico row) rather than rewriting the whole file.
+
+On **first pass** (no existing index): create from scratch with Write tool, `status: wip`.
+On **subsequent passes**: Read the existing file first, then Edit only: `passes:`, `concepts:`, `updated:`, `avg_score:`, and the Storico table (append new row). Preserve everything else verbatim.
+
+Note sul template:
+- `STATUS`: `wip` solo sulla prima passata; sulle successive usa `EXISTING_STATUS`
+- `concepts`: totale cumulativo di note nel vault con `PROJECT_NAME` in `found_in` (tutte le passate, non solo questa)
+- `avg_score`: `VAULT_AVG_SCORE` — media cumulativa su tutti i concetti del progetto che hanno `score`; ometti se nessuno ha ancora `score`
+- Colonna `Score medio` Storico: `PASS_AVG_SCORE` — solo i concetti CREATE + EXTEND di quella passata; usa `-` per righe precedenti senza dato
 
 ```markdown
 ---
 project: PROJECT_NAME
 source_path: ROOT
-status: wip  ← first pass only; preserved from EXISTING_STATUS on subsequent passes
+status: STATUS
 first_distilled: FIRST_DISTILLED
 updated: YYYY-MM-DD
 passes: CURRENT_PASS
 concepts: N_TOTAL
+avg_score: X.X
 ---
 
 # PROJECT_NAME
 
 ## Storico passate
-| Passata | Data | Nuovi | Estesi | Found-in | Saltati |
-|---------|------|-------|--------|----------|---------|
+| Passata | Data | Nuovi | Estesi | Found-in | Saltati | Score medio |
+|---------|------|-------|--------|----------|---------|-------------|
 [STORICO_ROWS — all previous rows preserved, new row appended]
-| CURRENT_PASS | YYYY-MM-DD | N | N | N | N |
+| CURRENT_PASS | YYYY-MM-DD | N | N | N | N | X.X |
 
 ## Concetti di questo progetto
 \```dataview
-TABLE category, novelty, found_in, tags
+TABLE category, novelty, applicability, reusability, score, found_in
 FROM "notes"
 WHERE contains(found_in, "PROJECT_NAME")
-SORT novelty DESC
+SORT score DESC
 \```
 ```
 
@@ -339,9 +370,38 @@ Vault: VAULT_PATH/notes/
   Totale vault: N concetti canonici
 
   Novelty:  ★★★ N  |  ★★ N  |  ★ N
+  Score medio questa passata: X.X / 10
+
+  Distribuzione score (nuovi + estesi):
+    9-10  N concetti  ████
+     7-8  N concetti  ██
+     5-6  N concetti  █
+     0-4  N concetti
 
 Quando sei soddisfatto → imposta status: review in _index/PROJECT_NAME
 ```
+
+**Dopo aver scritto tutte le note**, calcola:
+- `N_TOTAL` = numero di note nel vault con `PROJECT_NAME` in `found_in` — comprende sia le note create da questo progetto che quelle di altri progetti in cui è stato aggiunto come FOUND_IN. Calcola con:
+  ```bash
+  grep -rl "found_in:.*\"PROJECT_NAME\"" "<VAULT_PATH>/notes/" 2>/dev/null | wc -l
+  ```
+  Non usare `N_PROJECT_NOTES + CREATE_COUNT` — quella formula non conta i FOUND_IN ricevuti.
+- `PASS_AVG_SCORE` = media dei `score` dei concetti CREATE + EXTEND di questa passata, arrotondata a 1 decimale (es. `6.3`) → usato nella colonna Storico e nel console output. Se 0 CREATE + EXTEND → `PASS_AVG_SCORE = -` (scrivi `-` nella colonna e ometti la riga "Score medio questa passata" dal console output)
+- `VAULT_AVG_SCORE` = media di tutti i `score` delle note nel vault con `PROJECT_NAME` in `found_in` (escludendo note senza `score`), arrotondata a 1 decimale (es. `7.1`); se nessuna nota ha `score` → ometti il campo `avg_score` dall'index
+
+**Bar chart**: 1 `█` per concetto fino a 8; se una fascia supera 8, scala proporzionalmente tutte le fasce (max 8 `█`).
+
+---
+
+## Multi-project batch strategy
+
+When distilling multiple projects in a single session (e.g. scanning an entire DevDrive):
+
+1. **Process one project at a time** — complete all 8 phases for project N before starting project N+1. Do not defer index writing to a batch at the end.
+2. **Write the index immediately after each project** — this ensures that if context pressure cuts the session short, all completed projects have accurate indexes. A deferred batch write is the primary cause of index overwrite errors.
+3. **Rebuild KNOWN_NOTES grep at session start, then keep it in-context** — the grep title index from Phase 1 should be run once and kept as a compact text reference. Do not re-grep before every project; do not discard it between projects.
+4. **If context is near limit mid-project**: write the notes extracted so far, write the index as `(parziale)`, then stop. Do not start the next project.
 
 ---
 
@@ -366,7 +426,7 @@ Tracciato nel frontmatter di `_index/<PROJECT_NAME>.md`:
 4. **Nessun limite numerico.** Estrai tutto ciò che è non-ovvio.
 5. **Mai sovrascrivere note esistenti.** Solo CREATE, EXTEND, o FOUND_IN.
 6. **Una nota per concetto, mai due.** Se esiste già → aggiorna `found_in`, non duplicare.
-7. **Novelty è onesta.** Il 3 deve essere davvero raro.
+7. **I punteggi sono onesti su tutte e 3 le dimensioni.** Il 3 in qualsiasi dimensione deve essere davvero giustificato — resisti all'inflazione verso l'alto su `novelty`, `applicability` e `reusability`.
 8. **Prosa prima, codice solo se necessario** (≤8 righe).
 9. **Nessuna domanda a metà.**
 10. **Il vault deve sopravvivere alla cancellazione del progetto.**
@@ -378,3 +438,8 @@ Tracciato nel frontmatter di `_index/<PROJECT_NAME>.md`:
 16. **`status` non si resetta mai** — sulla prima creazione è `wip`; sulle passate successive si preserva `EXISTING_STATUS`. Un `done` non diventa mai `wip` automaticamente.
 17. **LAST_PASS dall'index, non dalle note** — `passes:` nell'index è la fonte autoritativa; le note non vengono aggiornate su EXTEND.
 18. **`Vedi anche` nel corpo, `see_also` nel frontmatter** — i wikilink nel corpo creano connessioni reali nel grafo Obsidian; il frontmatter è per Dataview.
+19. **`score` è sempre calcolato, mai omesso.** Per ogni nota CREATE usa la formula composita: `round(((novelty-1)*0.45 + (applicability-1)*0.35 + (reusability-1)*0.20) / 2 * 10)`. Per EXTEND aggiorna `score` se `novelty`, `applicability` o `reusability` cambiano. Per FOUND_IN il `score` rimane invariato (appartiene al concetto, non al progetto corrente).
+20. **KNOWN_NOTES via grep, non via lettura file.** Phase 1 costruisce l'indice con `grep -rh "^title:"` e `grep -rh "^found_in:"` — non aprendo ogni nota. Aprire singole note solo per verificare un potenziale match. Ignorare questa regola porta a note duplicate cross-sessione.
+21. **Index: leggi prima di scrivere.** Se `_index/<PROJECT_NAME>.md` esiste, aprilo con Read e usa Edit per aggiornare solo i campi che cambiano. Non usare Write o bash redirection su un index esistente — distrugge lo Storico delle passate precedenti.
+22. **`concepts:` conta tutto il vault, non solo i CREATE.** Il valore è `grep -rl "found_in:.*\"PROJECT_NAME\"" notes/ | wc -l`. Include note CREATE di questo progetto, FOUND_IN ricevuti da altri progetti, e EXTEND. Non calcolarlo come `N_PROJECT_NOTES + nuovi_CREATE` — quella formula non conta i FOUND_IN ricevuti.
+23. **`3` richiede giustificazione difendibile.** Prima di assegnare 3 in qualsiasi dimensione, formulare mentalmente la frase: *"È un 3 perché..."*. Se la frase è vaga o incerta, è un 2. Il dubbio va sempre verso il basso.
