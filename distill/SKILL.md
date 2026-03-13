@@ -50,7 +50,6 @@ cd "<SOURCE_PATH>" && pwd          # → ROOT
 basename "<ROOT>"                  # → PROJECT_NAME
 mkdir -p "<VAULT_PATH>/notes"
 mkdir -p "<VAULT_PATH>/_index"
-mkdir -p "<VAULT_PATH>/views"
 ```
 
 **Load existing notes** — read every `.md` in `<VAULT_PATH>/notes/`:
