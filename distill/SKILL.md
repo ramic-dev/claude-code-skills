@@ -53,47 +53,6 @@ mkdir -p "<VAULT_PATH>/_index"
 mkdir -p "<VAULT_PATH>/views"
 ```
 
-**Create starter Dashboard if missing:**
-If `<VAULT_PATH>/views/Dashboard.md` does not exist, create it (one Write call):
-
-```markdown
----
-title: Dashboard
----
-
-# Knowledge Dashboard
-
-## Pipeline progetti
-\```dataview
-TABLE status, passes, concepts, updated
-FROM "_index"
-SORT status ASC
-\```
-
-## Tutto, per non-ovvietà decrescente
-\```dataview
-TABLE category, project, novelty, tags
-FROM "notes"
-WHERE novelty
-SORT novelty DESC
-\```
-
-## Solo i più rari (novelty 3)
-\```dataview
-TABLE category, project, tags, pass
-FROM "notes"
-WHERE novelty = 3
-SORT project ASC
-\```
-
-## Per categoria
-\```dataview
-TABLE project, novelty, tags
-FROM "notes"
-SORT category ASC, novelty DESC
-\```
-```
-
 **Load existing notes** — read every `.md` in `<VAULT_PATH>/notes/`:
 ```bash
 ls "<VAULT_PATH>/notes/" 2>/dev/null
