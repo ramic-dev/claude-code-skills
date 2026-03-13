@@ -8,7 +8,7 @@ description: Extract and document all unique ideas, algorithms, patterns, and no
   in a notes/ folder inside the vault, compatible with Obsidian + Dataview. Supports
   multiple passes and cross-project deduplication: if the same concept appears in two
   projects, one canonical note grows with found_in rather than duplicating.
-version: 8.0.0
+version: 9.0.0
 context: fork
 agent: general-purpose
 allowed-tools: Read, Grep, Glob, Bash, Write
@@ -59,8 +59,10 @@ mkdir -p "<VAULT_PATH>/_index"
 
 **Load existing index** — if `<VAULT_PATH>/_index/<PROJECT_NAME>.md` exists, read it:
 - Extract `first_distilled` date → store as `FIRST_DISTILLED`
+- Extract `passes:` value → store as `LAST_PASS` (authoritative source for pass count)
+- Extract `status:` value → store as `EXISTING_STATUS`
 - Extract all existing rows from the Storico table → store as `STORICO_ROWS`
-- If file does not exist: `FIRST_DISTILLED = today`, `STORICO_ROWS = []`
+- If file does not exist: `FIRST_DISTILLED = today`, `LAST_PASS = 0`, `EXISTING_STATUS = none`, `STORICO_ROWS = []`
 
 **Load existing notes** — read every `.md` in `<VAULT_PATH>/notes/`:
 ```bash
@@ -70,8 +72,9 @@ For each file, read it and extract:
 - `title` from frontmatter + first 2 lines of body → add to `KNOWN_NOTES` map (filename → {title, summary, found_in, tags, category})
 - Find notes where `found_in` contains `PROJECT_NAME` → collect their `pass` values
 
-`LAST_PASS` = max pass value found among notes for this project (or 0 if none).
 `CURRENT_PASS = LAST_PASS + 1`.
+
+If `LAST_PASS` was read from the index (preferred), use that. Fall back to max `pass` value among notes only if no index exists.
 
 Print: `Passata N | Note vault totali: N | Già da questo progetto: N | Vault: VAULT_PATH`
 
@@ -245,7 +248,7 @@ novelty: 1-3
 found_in: [PROJECT_NAME]
 source: [relative/path/to/file.ext]
 tags: [tag1, tag2, PROJECT_TAG]
-see_also: ["[[related-slug]]", "[[other-slug]]"]
+see_also: [related-slug, other-slug]
 date: YYYY-MM-DD
 updated:
 pass: CURRENT_PASS
@@ -259,12 +262,17 @@ pass: CURRENT_PASS
 [Pseudocodice ≤8 righe, o ometti se la descrizione basta.]
 
 **Quando riapplicare:** [Una frase: in quale scenario futuro questa soluzione torna utile. Ometti per `frammento` e `conoscenza-di-dominio`.]
+
+---
+*Vedi anche: [[related-slug]] · [[other-slug]]*
 ```
 
 Note:
 - `source` is always a YAML list (even with one item) — avoids type mutation on future FOUND_IN updates
 - `tags` always ends with `PROJECT_TAG` — enables Obsidian tag panel navigation by project
-- `see_also` uses `"[[slug]]"` format — renders as clickable wikilinks in Obsidian
+- `see_also` in frontmatter: plain slugs (no brackets) — for Dataview queries
+- `Vedi anche` line in body: `[[wikilinks]]` — creates real Obsidian graph edges and clickable links
+- Omit both `see_also` field and `Vedi anche` line entirely if no related notes exist
 
 **Extended notes (EXTEND):** append to existing file:
 ```markdown
@@ -288,14 +296,14 @@ Update frontmatter: `updated: YYYY-MM-DD`. Raise `novelty` if justified. Add `PR
 
 **Project index** — Write `<VAULT_PATH>/_index/<PROJECT_NAME>.md`:
 
-On **first pass** (no existing index): create from scratch.
-On **subsequent passes**: preserve `first_distilled` from `FIRST_DISTILLED`, append the new row to `STORICO_ROWS`, rewrite the full file with the accumulated history.
+On **first pass** (no existing index): create from scratch, `status: wip`.
+On **subsequent passes**: preserve `first_distilled` from `FIRST_DISTILLED`, preserve `status` from `EXISTING_STATUS` (never reset a user's `review` or `done` to `wip`), append the new row to `STORICO_ROWS`.
 
 ```markdown
 ---
 project: PROJECT_NAME
 source_path: ROOT
-status: wip
+status: wip  ← first pass only; preserved from EXISTING_STATUS on subsequent passes
 first_distilled: FIRST_DISTILLED
 updated: YYYY-MM-DD
 passes: CURRENT_PASS
@@ -367,3 +375,6 @@ Tracciato nel frontmatter di `_index/<PROJECT_NAME>.md`:
 13. **`_index` Storico è cumulativo** — le righe delle passate precedenti non si cancellano mai.
 14. **`source` è sempre una lista YAML** — anche con un solo elemento, per coerenza con gli aggiornamenti FOUND_IN.
 15. **PROJECT_NAME è normalizzato** — kebab-case, minuscolo, senza caratteri speciali.
+16. **`status` non si resetta mai** — sulla prima creazione è `wip`; sulle passate successive si preserva `EXISTING_STATUS`. Un `done` non diventa mai `wip` automaticamente.
+17. **LAST_PASS dall'index, non dalle note** — `passes:` nell'index è la fonte autoritativa; le note non vengono aggiornate su EXTEND.
+18. **`Vedi anche` nel corpo, `see_also` nel frontmatter** — i wikilink nel corpo creano connessioni reali nel grafo Obsidian; il frontmatter è per Dataview.
