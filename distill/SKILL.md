@@ -8,7 +8,7 @@ description: Extract and document all unique ideas, algorithms, patterns, and no
   in a notes/ folder inside the vault, compatible with Obsidian + Dataview. Supports
   multiple passes and cross-project deduplication: if the same concept appears in two
   projects, one canonical note grows with found_in rather than duplicating.
-version: 6.0.0
+version: 7.0.0
 context: fork
 agent: general-purpose
 allowed-tools: Read, Grep, Glob, Bash, Write
@@ -56,7 +56,7 @@ mkdir -p "<VAULT_PATH>/_index"
 ls "<VAULT_PATH>/notes/" 2>/dev/null
 ```
 For each file, read it and extract:
-- `title` from frontmatter + first 2 lines of body → add to `KNOWN_NOTES` map (filename → {title, summary, found_in})
+- `title` from frontmatter + first 2 lines of body → add to `KNOWN_NOTES` map (filename → {title, summary, found_in, tags})
 - Find notes where `found_in` contains `PROJECT_NAME` → determine `LAST_PASS` from their `pass` field
 
 `CURRENT_PASS = LAST_PASS + 1` (or `1` if no existing notes mention this project).
@@ -69,10 +69,15 @@ Print: `Passata N | Note vault totali: N | Già da questo progetto: N | Vault: V
 
 ```bash
 find "<ROOT>" -type f \
-  ! -path "*/.git/*" ! -path "*/node_modules/*" ! -path "*/__pycache__/*" \
-  ! -path "*/dist/*" ! -path "*/build/*" ! -path "*/vendor/*" \
+  ! -path "*/.git/*" \
+  ! -path "*/node_modules/*" ! -path "*/__pycache__/*" \
+  ! -path "*/dist/*" ! -path "*/build/*" \
+  ! -path "*/vendor/*" ! -path "*/web/vendor/*" \
   ! -path "*/.next/*" ! -path "*/.venv/*" ! -path "*/venv/*" \
   ! -path "*/target/*" ! -path "*/.gradle/*" ! -path "*/coverage/*" \
+  ! -path "*/core/*" ! -path "*/web/core/*" \
+  ! -path "*/modules/contrib/*" ! -path "*/themes/contrib/*" \
+  ! -path "*/profiles/contrib/*" \
   2>/dev/null | sort
 ```
 
@@ -88,12 +93,37 @@ Print: `Da leggere: N_TEXT testo + N_NATIVE immagini/PDF | Saltati: N_SKIP`
 
 ## Phase 3 — Priority Pre-Scan
 
+Read these files first — highest knowledge density, regardless of other signals:
 ```bash
-grep -rl "HACK:\|WORKAROUND:\|monkey.patch\|kludge" "<ROOT>" 2>/dev/null
-grep -rl "algorithm\|heuristic\|approximat\|theorem\|invariant" "<ROOT>" -i 2>/dev/null
-grep -rl "EXPERIMENTAL\|POC\|WIP\|DRAFT\|SPIKE" "<ROOT>" -i 2>/dev/null
-grep -rl "eval\|Function(\|__import__\|ctypes\|FFI\|unsafe" "<ROOT>" 2>/dev/null
-grep -rl "Math\.\(sin\|cos\|sqrt\|pow\|log\)\|sigmoid\|entropy" "<ROOT>" -i 2>/dev/null
+find "<ROOT>" -type f \( \
+  -iname "README*" -o -iname "ARCHITECTURE*" -o -iname "DESIGN*" \
+  -o -iname "DECISIONS*" -o -iname "ADR*" -o -iname "CHANGELOG*" \
+  -o -path "*/docs/*" -o -path "*/doc/*" -o -path "*/decisions/*" \
+\) ! -path "*/.git/*" ! -path "*/node_modules/*" ! -path "*/vendor/*" \
+   ! -path "*/core/*" ! -path "*/web/core/*" \
+   ! -path "*/modules/contrib/*" ! -path "*/themes/contrib/*" \
+   2>/dev/null
+```
+
+Then scan for high-signal code patterns (apply same exclusions):
+```bash
+grep -rl "HACK:\|WORKAROUND:\|monkey.patch\|kludge" "<ROOT>" \
+  --exclude-dir=".git" --exclude-dir="node_modules" --exclude-dir="vendor" \
+  --exclude-dir="core" --exclude-dir="modules/contrib" --exclude-dir="themes/contrib" \
+  2>/dev/null
+grep -rl "algorithm\|heuristic\|approximat\|theorem\|invariant" "<ROOT>" -i \
+  --exclude-dir=".git" --exclude-dir="node_modules" --exclude-dir="vendor" \
+  --exclude-dir="core" --exclude-dir="modules/contrib" --exclude-dir="themes/contrib" \
+  2>/dev/null
+grep -rl "EXPERIMENTAL\|POC\|WIP\|DRAFT\|SPIKE" "<ROOT>" -i \
+  --exclude-dir=".git" --exclude-dir="node_modules" --exclude-dir="vendor" \
+  --exclude-dir="core" 2>/dev/null
+grep -rl "eval\|Function(\|__import__\|ctypes\|FFI\|unsafe" "<ROOT>" \
+  --exclude-dir=".git" --exclude-dir="node_modules" --exclude-dir="vendor" \
+  --exclude-dir="core" 2>/dev/null
+grep -rl "Math\.\(sin\|cos\|sqrt\|pow\|log\)\|sigmoid\|entropy" "<ROOT>" -i \
+  --exclude-dir=".git" --exclude-dir="node_modules" --exclude-dir="vendor" \
+  --exclude-dir="core" 2>/dev/null
 ```
 
 Files matching multiple signals → read first.
@@ -126,6 +156,16 @@ When uncertain between two scores, assign the lower.
 | `conoscenza-di-dominio` | Business rules, thresholds, ratios encoding hard-won domain expertise |
 | `decisione` | Why something non-standard was chosen — when the default would seem simpler |
 | `frammento` | Code so short and dense that quoting it is the most efficient representation (≤8 lines) |
+
+### Tag taxonomy
+
+Tags must be lowercase kebab-case. Use atomic tags, not compound ones:
+- Technology: `drupal`, `php`, `javascript`, `python`, `react`, `sql`, `bash`
+- Subsystem: `views`, `twig`, `webpack`, `docker`, `nginx`, `cron`
+- Concept: `caching`, `auth`, `form-api`, `migrations`, `config-api`, `hooks`
+- Domain: `performance`, `security`, `ui`, `api`, `cli`, `testing`
+
+Never: `drupal-views` (split into `drupal` + `views`), CamelCase, project names as concept tags.
 
 ### Not worth extracting
 Standard CRUD, libraries used as intended, boilerplate, self-evident config, standard patterns used standardly, anything a competent developer arrives at in <5 minutes.
@@ -163,9 +203,15 @@ After extracting all concepts: if two newly-extracted concepts describe the same
 
 ---
 
-## Phase 7 — Decide Actions
+## Phase 7 — Decide Actions & Build see_also
 
 Classify each concept: `CREATE` / `EXTEND` / `FOUND_IN` / `SKIP`. Count each.
+
+**For every concept marked CREATE or EXTEND**, build `see_also`:
+- Compare the concept's title, category, and tags against all `KNOWN_NOTES`
+- If a note in the vault is conceptually related (same domain, complementary mechanism, or prerequisite knowledge) → add its filename to `see_also`
+- Also cross-link concepts extracted in this same pass if they are related
+- Limit: max 5 entries in `see_also`. If none are relevant, leave `[]`.
 
 ---
 
@@ -182,8 +228,8 @@ category: algoritmo | pattern-architetturale | hack | conoscenza-di-dominio | de
 novelty: 1-3
 found_in: [PROJECT_NAME]
 source: relative/path/to/file.ext
-tags: [tag1, tag2, tag3]
-see_also: []
+tags: [tag1, tag2, project/PROJECT_NAME]
+see_also: [related-note.md, other-note.md]
 date: YYYY-MM-DD
 updated:
 pass: CURRENT_PASS
@@ -199,16 +245,19 @@ pass: CURRENT_PASS
 **Quando riapplicare:** [Una frase: in quale scenario futuro questa soluzione torna utile. Ometti per `frammento` e `conoscenza-di-dominio`.]
 ```
 
+**Note:** `tags` must always end with `project/PROJECT_NAME` — this enables native Obsidian tag navigation by project alongside Dataview queries via `found_in`.
+
 **Extended notes (EXTEND):** append to existing file:
 ```markdown
 
 ## Integrazione (YYYY-MM-DD) — passata CURRENT_PASS
 [Solo le informazioni nuove.]
 ```
-Update frontmatter: `updated: YYYY-MM-DD`. Raise `novelty` if justified.
+Update frontmatter: `updated: YYYY-MM-DD`. Raise `novelty` if justified. Add `project/PROJECT_NAME` to `tags` if not already present.
 
 **Cross-project notes (FOUND_IN):** update existing file frontmatter:
 - Add `PROJECT_NAME` to `found_in` array
+- Add `project/PROJECT_NAME` to `tags` array if not already present
 - Add current source path to `source` (make it a list if it was a string)
 - Update `updated: YYYY-MM-DD`
 - If usage context differs meaningfully, append:
@@ -290,3 +339,5 @@ Tracciato nel frontmatter di `_index/<PROJECT_NAME>.md`:
 8. **Prosa prima, codice solo se necessario** (≤8 righe).
 9. **Nessuna domanda a metà.**
 10. **Il vault deve sopravvivere alla cancellazione del progetto.**
+11. **`tags` include sempre `project/PROJECT_NAME`** — mai omettere, è il ponte tra Dataview e navigazione Obsidian nativa.
+12. **I grep di Phase 3 escludono sempre vendor/contrib/core** — mai scansionare codice di terze parti per segnali di priorità.
