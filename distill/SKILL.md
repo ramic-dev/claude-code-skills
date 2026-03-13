@@ -5,51 +5,55 @@ description: Extract and document all unique ideas, algorithms, patterns, and no
   files), /distill saves concepts — the reasoning, decisions, and insights that cannot
   be reconstructed from scratch. Each concept becomes a separate markdown file with
   YAML frontmatter, compatible with Obsidian + Dataview for search and filtering.
+  Supports multiple passes — on re-run, extends existing notes rather than overwriting.
   Use when you want to "extract ideas before deleting a project", "document what I
   learned from this codebase", "capture unique knowledge", "distill project insights",
   or "build a knowledge base" from existing code.
-version: 2.0.0
+version: 3.0.0
 context: fork
 agent: general-purpose
 allowed-tools: Read, Grep, Glob, Bash, Write
 argument-hint: [path] [output-vault]
 ---
 
-You are running the **distill** skill. Read every file in a project, extract every non-obvious concept, and produce one markdown file per concept inside a central knowledge vault — compatible with Obsidian + Dataview for search, filtering, and linking.
+You are running the **distill** skill. Read every file in a project, extract every non-obvious concept, and write one markdown file per concept to a central knowledge vault — compatible with Obsidian + Dataview.
 
-**Core principle:** files are reconstructable, ideas are not. Your output is not a report about files — it is a collection of atomic knowledge notes. Each note must be self-contained: a competent developer with no access to the original code must be able to understand and re-implement the concept from the note alone.
+**Core principle:** files are reconstructable, ideas are not. Each note must be self-contained: a competent developer with no access to the original code must be able to understand and re-implement the concept from the note alone.
 
-Work through all 7 phases autonomously. Never ask clarifying questions.
+**Multiple passes:** this skill is designed to run multiple times on the same project. On each run it reads existing vault notes first and only adds or extends — never overwrites.
 
-**If context pressure forces abbreviation**, write whatever notes you have extracted so far, then write the index. Never skip Phase 1 or 7.
+Work through all 8 phases autonomously. Never ask clarifying questions.
+
+**If context pressure forces abbreviation**, write notes extracted so far, then the index. Never skip Phase 1 or 8.
 
 ---
 
-## Phase 1 — Setup
+## Phase 1 — Setup & Existing Knowledge Load
 
 Parse `$ARGUMENTS`:
 - First token (if present): `SOURCE_PATH` — project to distill. Default: `.`
-- Second token (if present): `VAULT_PATH` — output knowledge vault. Default: `~/knowledge`
+- Second token (if present): `VAULT_PATH` — output vault. Default: `~/knowledge`
 
 ```bash
-cd "<SOURCE_PATH>" && pwd   # → ROOT
-basename "<ROOT>"           # → PROJECT_NAME (used in all note frontmatter)
-mkdir -p "<VAULT_PATH>"     # ensure vault exists
+cd "<SOURCE_PATH>" && pwd          # → ROOT
+basename "<ROOT>"                  # → PROJECT_NAME
+mkdir -p "<VAULT_PATH>/<PROJECT_NAME>"
+mkdir -p "<VAULT_PATH>/_index"
 ```
 
-If SOURCE_PATH invalid: stop and tell the user.
-
-**Vault structure:**
+**Load existing notes** — read every `.md` file already in `<VAULT_PATH>/<PROJECT_NAME>/`:
+```bash
+ls "<VAULT_PATH>/<PROJECT_NAME>/" 2>/dev/null
 ```
-<VAULT_PATH>/
-  <PROJECT_NAME>/         ← one subfolder per project
-    concept-name.md       ← one file per concept
-    ...
-  _index/
-    <PROJECT_NAME>.md     ← project summary and concept list
-```
+For each existing file, read it and extract:
+- `title` from frontmatter → add to `KNOWN_TITLES` set
+- Full body → add to `KNOWN_NOTES` map (filename → content)
 
-**Check for existing notes:** `ls "<VAULT_PATH>/<PROJECT_NAME>/" 2>/dev/null` — if files exist, read their titles to avoid duplicating already-extracted concepts.
+This set is the deduplication memory for this run. Print: `Note esistenti: N | Progetto: PROJECT_NAME`
+
+**Pipeline status:** check if `<VAULT_PATH>/_index/<PROJECT_NAME>.md` exists.
+- If yes: read its `status` field → print `Stato pipeline: <status>`
+- Update status to `wip` in the index file (or create it with `status: wip` if missing)
 
 ---
 
@@ -65,18 +69,16 @@ find "<ROOT>" -type f \
 ```
 
 **Partition:**
-- **SKIP:** lock files, minified (`*.min.js *.min.css`), source maps (`*.map`), empty files, auto-generated (first 8 lines contain `THIS FILE IS AUTO-GENERATED` / `DO NOT EDIT` / `@generated`), licenses (`LICENSE* COPYING*`), fonts (`.ttf .otf .woff .woff2`), compiled objects (`.o .pyc .class`)
-- **NATIVE:** `.pdf .jpg .jpeg .png .webp .gif` — read with Read tool
+- **SKIP:** lock files, minified (`*.min.js *.min.css`), source maps (`*.map`), empty files, auto-generated (first 8 lines: `THIS FILE IS AUTO-GENERATED` / `DO NOT EDIT` / `@generated`), licenses (`LICENSE* COPYING*`), fonts (`.ttf .otf .woff .woff2`), compiled (`.o .pyc .class`)
+- **NATIVE:** `.pdf .jpg .jpeg .png .webp .gif`
 - **Unknown extension:** `head -c 512 "<path>" 2>/dev/null | LC_ALL=C grep -cP '\x00'` → 0 = TEXT, >0 = SKIP
 - **TEXT:** everything else
 
-Print: `Sorgente: ROOT | Da leggere: N_TEXT testo + N_NATIVE immagini/PDF | Saltati: N_SKIP`
+Print: `Da leggere: N_TEXT testo + N_NATIVE immagini/PDF | Saltati: N_SKIP`
 
 ---
 
 ## Phase 3 — Priority Pre-Scan
-
-Run these Grep searches to identify high-signal files. Read them first so context pressure doesn't cut off the most valuable content.
 
 ```bash
 grep -rl "HACK:\|WORKAROUND:\|monkey.patch\|kludge" "<ROOT>" 2>/dev/null
@@ -86,41 +88,76 @@ grep -rl "eval\|Function(\|__import__\|ctypes\|FFI\|unsafe" "<ROOT>" 2>/dev/null
 grep -rl "Math\.\(random\|sin\|cos\|sqrt\|pow\|log\)\|sigmoid\|entropy" "<ROOT>" -i 2>/dev/null
 ```
 
-Build reading order: files matching multiple signals → first. Files matching none → last.
+Files matching multiple signals → read first.
 
 ---
 
 ## Phase 4 — Read & Extract Concepts
 
-Read files in priority order. For each file, apply the extraction filter:
+For each file, ask: **"Would a competent developer say 'obvious' or 'interesting — I wouldn't have thought of that'?"**
 
-> **"Would a competent developer, given only a description of this solution, say 'obvious' or 'interesting — I wouldn't have thought of that'?"**
+*Interesting* → extract. *Obvious* → skip.
 
-*Interesting* → extract a note. *Obvious* → move on.
+### Categories
 
-### What to extract
-
-| Category (`category` in frontmatter) | What qualifies |
-|---------------------------------------|---------------|
-| `algoritmo` | Non-standard computation, custom data structure, formula implemented from scratch, unexpected optimization |
-| `pattern-architetturale` | Unusual component communication, inverted data flow, server emitting code to client, non-standard layering |
-| `hack` | Workaround for platform/library limitation, non-obvious sequencing, polyfill for missing behavior |
-| `conoscenza-di-dominio` | Business rules, thresholds, ratios embedded in logic that encode hard-won domain expertise |
-| `decisione` | Why something non-standard was chosen — especially when the default would seem simpler |
+| `category` | What qualifies |
+|------------|---------------|
+| `algoritmo` | Non-standard computation, custom data structure, formula from scratch, unexpected optimization |
+| `pattern-architetturale` | Unusual component communication, inverted data flow, non-standard layering |
+| `hack` | Workaround for platform/library limitation, non-obvious sequencing, polyfill |
+| `conoscenza-di-dominio` | Business rules, thresholds, ratios that encode hard-won domain expertise |
+| `decisione` | Why something non-standard was chosen — especially when the default seems simpler |
 | `frammento` | Code so short and dense that quoting it directly is the most efficient representation (≤8 lines) |
 
-### What NOT to extract
-- Standard CRUD (fetch, save, delete)
-- Libraries used in their intended way
-- Boilerplate (React scaffold, Express route, Drupal hook stub)
-- Config with self-evident values (`port: 3000`)
-- Standard design patterns used standardly
-- Anything a competent developer arrives at in <5 minutes
+### Not worth extracting
+Standard CRUD, libraries used as intended, boilerplate, self-evident config, standard patterns used standardly, anything a competent developer arrives at in <5 minutes.
 
-### Concept note format
+### Per-concept deduplication (apply before writing each note)
 
-Each concept = one file. Filename: `kebab-case-title.md` (no special chars, max 60 chars).
+For each extracted concept, compare its title and description against `KNOWN_TITLES` and `KNOWN_NOTES`:
 
+**Case A — Title not in KNOWN_TITLES:** concept is new → create new file.
+
+**Case B — Title matches or is very similar (same idea, same project):**
+- Compare new description against existing note body
+- If the new pass found **no additional information** → skip entirely, do not write
+- If the new pass found **genuinely new details** (new context, edge case, additional example, correction) → mark as UPDATE: append an `## Integrazione (YYYY-MM-DD)` section to the existing file with only the new information. Update `updated` in frontmatter.
+
+**Case C — Same concept, different project:** create new file with different `project` field. These are separate notes — same idea appearing in two projects is itself interesting.
+
+---
+
+## Phase 5 — Native Files
+
+View each NATIVE file with the Read tool. Extract a note only if the file contains original creative work with non-obvious choices (game map with specific parameters, diagram with non-derivable knowledge). Generic stock images, icons, screenshots: no note.
+
+---
+
+## Phase 6 — Deduplication Pass
+
+After extracting all concepts for this run:
+- If two newly-extracted concepts describe the same idea → merge into one note, list both source files
+- Review new notes against KNOWN_NOTES one more time for any missed overlaps
+
+---
+
+## Phase 7 — Decide Action Per Note
+
+Classify each note from this run:
+
+| Action | Condition | What to write |
+|--------|-----------|---------------|
+| `CREATE` | New concept (Case A) | Full new file |
+| `EXTEND` | Existing + new details (Case B with additions) | Append `## Integrazione` section to existing file |
+| `SKIP` | Existing + nothing new (Case B, no additions) | Nothing |
+
+---
+
+## Phase 8 — Write Files & Update Index
+
+**New notes (CREATE):** one Write call per file to `<VAULT_PATH>/<PROJECT_NAME>/<kebab-title>.md`.
+
+Note format:
 ```markdown
 ---
 title: "[Titolo conciso — l'idea, non il file]"
@@ -129,105 +166,97 @@ project: PROJECT_NAME
 source: relative/path/to/file.ext
 tags: [tag1, tag2, tag3]
 date: YYYY-MM-DD
+updated:
 ---
 
-**Descrizione:** [1–3 frasi che spiegano l'idea compiutamente. Chi non ha visto il codice deve capire.]
+**Descrizione:** [1–3 frasi autocontenute.]
 
-**Perché non-ovvio:** [Qual è l'alternativa default che non hai usato, e perché questa soluzione è diversa/migliore.]
+**Perché non-ovvio:** [Alternativa default e perché questa è diversa.]
 
 **Ricostruzione:**
-[Pseudocodice ≤8 righe, O descrizione algoritmica, O ometti se la descrizione basta.]
+[Pseudocodice ≤8 righe, o ometti se la descrizione basta.]
 ```
 
-**Shortform** (for simple but non-obvious ideas):
+**Extended notes (EXTEND):** Edit existing file to append:
 ```markdown
----
-title: "..."
-category: ...
-project: PROJECT_NAME
-source: relative/path
-tags: [...]
-date: YYYY-MM-DD
----
-[Una frase autocontenuta. Perché non-ovvio: ...]
+
+## Integrazione (YYYY-MM-DD)
+[Solo le informazioni nuove trovate in questa passata.]
 ```
+Also update frontmatter `updated: YYYY-MM-DD`.
 
-### Rules for notes
-- **Titolo = idea, non file.** "Parallel eval-fetch bootstrap", non "js/script.js"
-- **Autocontenuto.** Chi non ha il codice deve capire.
-- **Una nota per concetto.** Se lo stesso pattern appare in 3 file, una nota con `source` che lista tutti e tre: `source: [file1, file2, file3]`
-- **Prosa prima, codice solo se necessario.** Snippet ≤8 righe.
-- **Scrivi in italiano.** Il codice resta nella lingua originale.
-- **Tag utili:** linguaggio (`javascript`, `php`, `rust`, `css`), dominio (`gioco`, `drupal`, `auth`, `ui`), tecnica (`eval`, `websocket`, `css-animation`, `sql`)
-
----
-
-## Phase 5 — Native Files
-
-View each NATIVE file with the Read tool. Extract a note only if the file contains original creative work with non-obvious choices (game map with specific parameters, diagram with non-derivable knowledge, design system with non-trivial rationale). Generic stock images, icons, screenshots: no note.
-
----
-
-## Phase 6 — Deduplication
-
-Before writing, review all notes mentally:
-- Same underlying idea in multiple notes → merge, update `source` to list all files
-- Title clash with existing vault notes → append `-(2)` or merge if truly identical
-
----
-
-## Phase 7 — Write All Files
-
-**One Write call per concept note** to `<VAULT_PATH>/<PROJECT_NAME>/<filename>.md`.
-
-Then write the **project index** — one Write call to `<VAULT_PATH>/_index/<PROJECT_NAME>.md`:
-
+**Project index** — Write/overwrite `<VAULT_PATH>/_index/<PROJECT_NAME>.md`:
 ```markdown
 ---
 project: PROJECT_NAME
 source_path: ROOT
-distilled: YYYY-MM-DD
-concepts: N
+status: wip
+first_distilled: YYYY-MM-DD
+updated: YYYY-MM-DD
+passes: N
+concepts: N_TOTAL
 ---
 
-# PROJECT_NAME — Indice Concetti
+# PROJECT_NAME
 
-| Concetto | Categoria | Tag |
-|----------|-----------|-----|
-| [[concept-file\|Titolo]] | categoria | tag1, tag2 |
-...
+| Concetto | Categoria | Tags | Aggiornato |
+|----------|-----------|------|------------|
+| [[percorso\|Titolo]] | categoria | tag1, tag2 | data |
 
-## Dataview query (incolla in Obsidian)
+## Query Dataview
 \```dataview
-TABLE category, tags, source
+TABLE category, tags, updated
 FROM "PROJECT_NAME"
 SORT category ASC
 \```
+
+## Note di passata
+- **Passata N (YYYY-MM-DD):** N nuovi concetti, N estesi, N saltati
 ```
 
-Finally print to console:
+**Console output:**
 ```
-/distill completato.
+/distill completato — PROJECT_NAME (passata N)
 Vault: <VAULT_PATH>/<PROJECT_NAME>/
-Concetti estratti: N
-  algoritmo: N
-  pattern-architetturale: N
-  hack: N
-  conoscenza-di-dominio: N
-  decisione: N
-  frammento: N
-File originali analizzati: N_TEXT + N_NATIVE
+
+  Nuovi:    N  (creati)
+  Estesi:   N  (integrati)
+  Saltati:  N  (già documentati)
+  Totale vault: N concetti
+
+Prossimo passo: apri Obsidian → _index/PROJECT_NAME
+Quando sei soddisfatto → aggiorna status: review in Obsidian
+```
+
+---
+
+## Pipeline Status (Obsidian)
+
+The `_index/<PROJECT_NAME>.md` file tracks pipeline state via its `status` property:
+
+| Status | Significato | Chi lo imposta |
+|--------|-------------|----------------|
+| `queue` | da processare | tu, manualmente |
+| `wip` | distillazione in corso | skill (automatico) |
+| `review` | distillato, verifica umana | tu, dopo ogni passata |
+| `done` | verificato, sicuro da eliminare | tu, decisione finale |
+
+Dataview query per vedere il pipeline completo:
+```dataview
+TABLE status, passes, concepts, updated
+FROM "_index"
+SORT status ASC
 ```
 
 ---
 
 ## Absolute Rules
 
-1. **Titoli sono idee, non file.**
+1. **Titoli sono idee, non file.** Mai il nome del file come titolo.
 2. **Ogni nota è autocontenuta** — comprensibile senza il codice originale.
-3. **Niente di ovvio.** Se ci si arriva in 5 minuti, non va nella knowledge base.
+3. **Niente di ovvio.** Se ci si arriva in 5 minuti, non va nel vault.
 4. **Nessun limite numerico.** Estrai tutto ciò che è non-ovvio.
-5. **Prosa prima, codice solo se necessario** e ≤8 righe.
-6. **Una Write per file.** Tanti Write call quante note + 1 per l'indice.
+5. **Mai sovrascrivere note esistenti.** Solo CREATE o EXTEND, mai replace.
+6. **Prosa prima, codice solo se necessario** (≤8 righe).
 7. **Nessuna domanda a metà.**
-8. **Il vault deve sopravvivere alla cancellazione del progetto.** Ogni nota deve essere comprensibile senza il sorgente.
+8. **Il vault deve sopravvivere alla cancellazione del progetto.**
