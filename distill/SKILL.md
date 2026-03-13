@@ -4,12 +4,13 @@ description: Extract and document all unique ideas, algorithms, patterns, and no
   knowledge from a project into atomic knowledge notes. Unlike /preserve (which saves
   files), /distill saves concepts — the reasoning, decisions, and insights that cannot
   be reconstructed from scratch. Each concept becomes a separate markdown file with
-  YAML frontmatter, compatible with Obsidian + Dataview for search and filtering.
-  Supports multiple passes — on re-run, extends existing notes rather than overwriting.
-  Use when you want to "extract ideas before deleting a project", "document what I
-  learned from this codebase", "capture unique knowledge", "distill project insights",
-  or "build a knowledge base" from existing code.
-version: 3.0.0
+  YAML frontmatter (including a novelty score 1-5), compatible with Obsidian + Dataview
+  for search, filtering, and sorting by non-obviousness. Supports multiple passes —
+  on re-run, extends existing notes rather than overwriting. Use when you want to
+  "extract ideas before deleting a project", "document what I learned from this codebase",
+  "capture unique knowledge", "distill project insights", or "build a knowledge base"
+  from existing code.
+version: 4.0.0
 context: fork
 agent: general-purpose
 allowed-tools: Read, Grep, Glob, Bash, Write
@@ -20,7 +21,9 @@ You are running the **distill** skill. Read every file in a project, extract eve
 
 **Core principle:** files are reconstructable, ideas are not. Each note must be self-contained: a competent developer with no access to the original code must be able to understand and re-implement the concept from the note alone.
 
-**Multiple passes:** this skill is designed to run multiple times on the same project. On each run it reads existing vault notes first and only adds or extends — never overwrites.
+**Multiple passes:** designed to run multiple times on the same project. Each run reads existing vault notes first and only adds or extends — never overwrites.
+
+**Vault creation:** the skill creates the vault directory automatically. The user does not need to create anything manually — just open Obsidian and point it to the vault folder after the first run.
 
 Work through all 8 phases autonomously. Never ask clarifying questions.
 
@@ -41,19 +44,22 @@ mkdir -p "<VAULT_PATH>/<PROJECT_NAME>"
 mkdir -p "<VAULT_PATH>/_index"
 ```
 
-**Load existing notes** — read every `.md` file already in `<VAULT_PATH>/<PROJECT_NAME>/`:
+**Load existing notes** — read every `.md` in `<VAULT_PATH>/<PROJECT_NAME>/`:
 ```bash
 ls "<VAULT_PATH>/<PROJECT_NAME>/" 2>/dev/null
 ```
 For each existing file, read it and extract:
 - `title` from frontmatter → add to `KNOWN_TITLES` set
+- `pass` from frontmatter → find the highest pass number → store as `LAST_PASS`
 - Full body → add to `KNOWN_NOTES` map (filename → content)
 
-This set is the deduplication memory for this run. Print: `Note esistenti: N | Progetto: PROJECT_NAME`
+Current pass number: `CURRENT_PASS = LAST_PASS + 1` (or `1` if no existing notes).
 
-**Pipeline status:** check if `<VAULT_PATH>/_index/<PROJECT_NAME>.md` exists.
-- If yes: read its `status` field → print `Stato pipeline: <status>`
-- Update status to `wip` in the index file (or create it with `status: wip` if missing)
+**Read existing index** if `<VAULT_PATH>/_index/<PROJECT_NAME>.md` exists:
+- Extract `passes` count and `concepts` count for the summary
+- Update `status: wip` (write this single field update)
+
+Print: `Passata N | Note esistenti: N | Progetto: PROJECT_NAME | Vault: VAULT_PATH`
 
 ---
 
@@ -96,7 +102,19 @@ Files matching multiple signals → read first.
 
 For each file, ask: **"Would a competent developer say 'obvious' or 'interesting — I wouldn't have thought of that'?"**
 
-*Interesting* → extract. *Obvious* → skip.
+If *interesting* → extract and assign a `novelty` score. If *obvious* → skip entirely.
+
+### Novelty score (assign to every extracted concept)
+
+| Score | Calibration |
+|-------|-------------|
+| `1` | Non-standard ma derivabile: un esperto ci arriva da solo in un'ora |
+| `2` | Richiede esperienza specifica o conoscenza del dominio per arrivarci |
+| `3` | Soluzione creativa non ovvia anche con esperienza; richiede insight |
+| `4` | Rara combinazione di vincoli e insight difficile da riscoprire indipendentemente |
+| `5` | Eccezionale: improbabile da riscoprire senza aver affrontato esattamente questo problema |
+
+When in doubt between two scores, assign the lower one. Never assign novelty 1 to anything you would have extracted anyway as "obvious" — if it's worth a note, it's at least 1.
 
 ### Categories
 
@@ -107,66 +125,58 @@ For each file, ask: **"Would a competent developer say 'obvious' or 'interesting
 | `hack` | Workaround for platform/library limitation, non-obvious sequencing, polyfill |
 | `conoscenza-di-dominio` | Business rules, thresholds, ratios that encode hard-won domain expertise |
 | `decisione` | Why something non-standard was chosen — especially when the default seems simpler |
-| `frammento` | Code so short and dense that quoting it directly is the most efficient representation (≤8 lines) |
+| `frammento` | Code so short and dense that quoting it is the most efficient representation (≤8 lines) |
 
 ### Not worth extracting
 Standard CRUD, libraries used as intended, boilerplate, self-evident config, standard patterns used standardly, anything a competent developer arrives at in <5 minutes.
 
-### Per-concept deduplication (apply before writing each note)
+### Per-concept deduplication
 
-For each extracted concept, compare its title and description against `KNOWN_TITLES` and `KNOWN_NOTES`:
+Compare each extracted concept against `KNOWN_TITLES` and `KNOWN_NOTES`:
 
-**Case A — Title not in KNOWN_TITLES:** concept is new → create new file.
+**Case A — New concept** (title not in KNOWN_TITLES): create new file. Action: `CREATE`.
 
-**Case B — Title matches or is very similar (same idea, same project):**
-- Compare new description against existing note body
-- If the new pass found **no additional information** → skip entirely, do not write
-- If the new pass found **genuinely new details** (new context, edge case, additional example, correction) → mark as UPDATE: append an `## Integrazione (YYYY-MM-DD)` section to the existing file with only the new information. Update `updated` in frontmatter.
+**Case B — Existing concept, no new information**: skip. Action: `SKIP`.
 
-**Case C — Same concept, different project:** create new file with different `project` field. These are separate notes — same idea appearing in two projects is itself interesting.
+**Case C — Existing concept, new details found** (new context, edge case, correction, additional example): append `## Integrazione (YYYY-MM-DD)` to existing file + update `updated` and `novelty` (raise if new details justify it) in frontmatter. Action: `EXTEND`.
+
+**Case D — Same concept, different project**: create new file with different `project`. Action: `CREATE`.
 
 ---
 
 ## Phase 5 — Native Files
 
-View each NATIVE file with the Read tool. Extract a note only if the file contains original creative work with non-obvious choices (game map with specific parameters, diagram with non-derivable knowledge). Generic stock images, icons, screenshots: no note.
+View each NATIVE file with the Read tool. Extract a note only if the file contains original creative work with non-obvious choices. Generic images, icons, screenshots: no note.
 
 ---
 
 ## Phase 6 — Deduplication Pass
 
-After extracting all concepts for this run:
-- If two newly-extracted concepts describe the same idea → merge into one note, list both source files
-- Review new notes against KNOWN_NOTES one more time for any missed overlaps
+After extracting all concepts: if two newly-extracted concepts describe the same idea → merge into one, list both source files in `source`.
 
 ---
 
-## Phase 7 — Decide Action Per Note
+## Phase 7 — Decide Actions
 
-Classify each note from this run:
-
-| Action | Condition | What to write |
-|--------|-----------|---------------|
-| `CREATE` | New concept (Case A) | Full new file |
-| `EXTEND` | Existing + new details (Case B with additions) | Append `## Integrazione` section to existing file |
-| `SKIP` | Existing + nothing new (Case B, no additions) | Nothing |
+Classify each note: `CREATE` / `EXTEND` / `SKIP`. Count each.
 
 ---
 
 ## Phase 8 — Write Files & Update Index
 
-**New notes (CREATE):** one Write call per file to `<VAULT_PATH>/<PROJECT_NAME>/<kebab-title>.md`.
+**New notes (CREATE):** one Write call per file to `<VAULT_PATH>/<PROJECT_NAME>/<kebab-title>.md`:
 
-Note format:
 ```markdown
 ---
 title: "[Titolo conciso — l'idea, non il file]"
 category: algoritmo | pattern-architetturale | hack | conoscenza-di-dominio | decisione | frammento
+novelty: 1-5
 project: PROJECT_NAME
 source: relative/path/to/file.ext
 tags: [tag1, tag2, tag3]
 date: YYYY-MM-DD
 updated:
+pass: CURRENT_PASS
 ---
 
 **Descrizione:** [1–3 frasi autocontenute.]
@@ -177,15 +187,16 @@ updated:
 [Pseudocodice ≤8 righe, o ometti se la descrizione basta.]
 ```
 
-**Extended notes (EXTEND):** Edit existing file to append:
+**Extended notes (EXTEND):** append to existing file:
 ```markdown
 
-## Integrazione (YYYY-MM-DD)
+## Integrazione (YYYY-MM-DD) — passata CURRENT_PASS
 [Solo le informazioni nuove trovate in questa passata.]
 ```
-Also update frontmatter `updated: YYYY-MM-DD`.
+Update frontmatter: `updated: YYYY-MM-DD`. Raise `novelty` if justified.
 
-**Project index** — Write/overwrite `<VAULT_PATH>/_index/<PROJECT_NAME>.md`:
+**Project index** — Write `<VAULT_PATH>/_index/<PROJECT_NAME>.md`:
+
 ```markdown
 ---
 project: PROJECT_NAME
@@ -193,30 +204,43 @@ source_path: ROOT
 status: wip
 first_distilled: YYYY-MM-DD
 updated: YYYY-MM-DD
-passes: N
+passes: CURRENT_PASS
 concepts: N_TOTAL
 ---
 
 # PROJECT_NAME
 
-| Concetto | Categoria | Tags | Aggiornato |
-|----------|-----------|------|------------|
-| [[percorso\|Titolo]] | categoria | tag1, tag2 | data |
+| Concetto | Categoria | Novelty | Tags | Passata |
+|----------|-----------|---------|------|---------|
+| [[percorso\|Titolo]] | categoria | ⭐⭐⭐ | tag1 | 1 |
 
-## Query Dataview
+## Storico passate
+| Passata | Data | Nuovi | Estesi | Saltati |
+|---------|------|-------|--------|---------|
+| 1 | YYYY-MM-DD | N | N | N |
+| 2 | YYYY-MM-DD | N | N | N |
+
+## Query Dataview utili
+
+Tutti i concetti ordinati per novelty:
 \```dataview
-TABLE category, tags, updated
+TABLE category, novelty, tags, pass
 FROM "PROJECT_NAME"
-SORT category ASC
+SORT novelty DESC
 \```
 
-## Note di passata
-- **Passata N (YYYY-MM-DD):** N nuovi concetti, N estesi, N saltati
+Solo i più rari (novelty ≥ 4):
+\```dataview
+TABLE category, project, tags
+FROM "PROJECT_NAME"
+WHERE novelty >= 4
+SORT novelty DESC
+\```
 ```
 
 **Console output:**
 ```
-/distill completato — PROJECT_NAME (passata N)
+/distill completato — PROJECT_NAME (passata CURRENT_PASS)
 Vault: <VAULT_PATH>/<PROJECT_NAME>/
 
   Nuovi:    N  (creati)
@@ -224,24 +248,20 @@ Vault: <VAULT_PATH>/<PROJECT_NAME>/
   Saltati:  N  (già documentati)
   Totale vault: N concetti
 
-Prossimo passo: apri Obsidian → _index/PROJECT_NAME
-Quando sei soddisfatto → aggiorna status: review in Obsidian
+  Per novelty:  ⭐⭐⭐⭐⭐ N  |  ⭐⭐⭐⭐ N  |  ⭐⭐⭐ N  |  ⭐⭐ N  |  ⭐ N
+
+Stato pipeline: wip → imposta "review" in Obsidian quando sei soddisfatto
 ```
 
 ---
 
-## Pipeline Status (Obsidian)
+## Obsidian setup (prima volta)
 
-The `_index/<PROJECT_NAME>.md` file tracks pipeline state via its `status` property:
+Il vault viene creato automaticamente dalla skill. Per aprirlo:
+1. Apri Obsidian → "Open folder as vault" → seleziona `<VAULT_PATH>`
+2. Installa il plugin **Dataview**: Settings → Community Plugins → Browse → "Dataview"
+3. Crea una nota `Dashboard.md` con:
 
-| Status | Significato | Chi lo imposta |
-|--------|-------------|----------------|
-| `queue` | da processare | tu, manualmente |
-| `wip` | distillazione in corso | skill (automatico) |
-| `review` | distillato, verifica umana | tu, dopo ogni passata |
-| `done` | verificato, sicuro da eliminare | tu, decisione finale |
-
-Dataview query per vedere il pipeline completo:
 ```dataview
 TABLE status, passes, concepts, updated
 FROM "_index"
@@ -250,13 +270,27 @@ SORT status ASC
 
 ---
 
+## Pipeline status
+
+Tracciato nel frontmatter di `_index/<PROJECT_NAME>.md`:
+
+| Status | Significato | Chi lo imposta |
+|--------|-------------|----------------|
+| `queue` | da processare | tu (manuale) |
+| `wip` | distillazione in corso | skill (auto) |
+| `review` | da verificare | tu (dopo ogni passata) |
+| `done` | verificato, sicuro da eliminare | tu (decisione finale) |
+
+---
+
 ## Absolute Rules
 
-1. **Titoli sono idee, non file.** Mai il nome del file come titolo.
+1. **Titoli sono idee, non file.**
 2. **Ogni nota è autocontenuta** — comprensibile senza il codice originale.
-3. **Niente di ovvio.** Se ci si arriva in 5 minuti, non va nel vault.
+3. **Niente di ovvio.** Novelty minima: 1. Se è meno di 1, non estrarre.
 4. **Nessun limite numerico.** Estrai tutto ciò che è non-ovvio.
-5. **Mai sovrascrivere note esistenti.** Solo CREATE o EXTEND, mai replace.
-6. **Prosa prima, codice solo se necessario** (≤8 righe).
-7. **Nessuna domanda a metà.**
-8. **Il vault deve sopravvivere alla cancellazione del progetto.**
+5. **Mai sovrascrivere note esistenti.** Solo CREATE o EXTEND.
+6. **Novelty è onesta.** Non gonfiare i punteggi — il 5 deve essere davvero eccezionale.
+7. **Prosa prima, codice solo se necessario** (≤8 righe).
+8. **Nessuna domanda a metà.**
+9. **Il vault deve sopravvivere alla cancellazione del progetto.**
