@@ -27,11 +27,10 @@ You are running the **distill** skill. Read every file in a project, extract eve
 ```
 <VAULT_PATH>/
   notes/          ← all concept notes, flat (no per-project subfolders)
-  views/          ← Dashboard.md and user-created Dataview queries
   _index/         ← one file per project, pipeline tracking only
 ```
 
-The skill creates `notes/` and `_index/` automatically. `views/` is created on first run if it doesn't exist, with a starter `Dashboard.md` inside.
+The skill creates only `notes/` and `_index/`. Any other folders (views, dashboards, queries) are managed entirely by the user.
 
 Work through all 8 phases autonomously. Never ask clarifying questions.
 
