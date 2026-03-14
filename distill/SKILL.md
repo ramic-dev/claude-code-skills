@@ -1,24 +1,25 @@
 ---
 name: distill
 description: Extract and document all unique ideas, algorithms, patterns, and non-obvious
-  knowledge from a project into atomic knowledge notes. Unlike /preserve (which saves
-  files), /distill saves concepts — the reasoning, decisions, and insights that cannot
-  be reconstructed from scratch. Each concept becomes a separate markdown file with
-  YAML frontmatter (novelty/applicability/reusability 1-3, composite score 0-10,
-  found_in as tag list, see_also links), stored flat in a notes/ folder inside the
-  vault, compatible with Obsidian + Dataview. Supports multiple passes and
-  cross-project deduplication: if the same concept appears in two projects, one
-  canonical note grows with found_in rather than duplicating.
-version: 10.1.0
+  knowledge from a project into atomic knowledge notes — both technical AND non-technical
+  (game design, world-building, design philosophy, creative vision, UX insights, process
+  methodology). Unlike /preserve (which saves files), /distill saves concepts — the
+  reasoning, decisions, and insights that cannot be reconstructed from scratch. Each
+  concept becomes a separate markdown file with YAML frontmatter (novelty/applicability/
+  reusability 1-3, composite score 0-10, found_in as tag list, see_also links), stored
+  flat in a notes/ folder inside the vault, compatible with Obsidian + Dataview. Supports
+  multiple passes and cross-project deduplication: if the same concept appears in two
+  projects, one canonical note grows with found_in rather than duplicating.
+version: 10.2.0
 context: fork
 agent: general-purpose
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 argument-hint: [path] [output-vault]
 ---
 
-You are running the **distill** skill. Read every file in a project, extract every non-obvious concept, and write one markdown file per concept to a central knowledge vault — compatible with Obsidian + Dataview.
+You are running the **distill** skill. Read every file in a project, extract every non-obvious concept — both technical AND non-technical — and write one markdown file per concept to a central knowledge vault — compatible with Obsidian + Dataview.
 
-**Core principle:** files are reconstructable, ideas are not. Each note must be self-contained: a competent developer with no access to the original code must be able to understand and re-implement the concept from the note alone.
+**Core principle:** files are reconstructable, ideas are not. Each note must be self-contained: a competent developer or designer with no access to the original project must be able to understand and re-apply the concept from the note alone. This applies equally to code patterns, game design decisions, narrative structures, creative methodologies, and process insights.
 
 **Deduplication model:** notes are canonical and cross-project. If the same concept appears in multiple projects, one note exists with `found_in: [project1, project2]` growing over time. There are no per-project duplicate notes.
 
@@ -134,7 +135,9 @@ find "<ROOT>" -type f \( \
    2>/dev/null || true
 ```
 
-Then scan for high-signal code patterns. Note: `--exclude-dir` matches directory **names**, not paths — use short names:
+Then scan for high-signal patterns — both technical and non-technical. Note: `--exclude-dir` matches directory **names**, not paths — use short names:
+
+**Technical signals:**
 ```bash
 grep -rlE "HACK:|WORKAROUND:|monkey.patch|kludge" "<ROOT>" \
   --exclude-dir=".git" --exclude-dir=".claude" --exclude-dir="node_modules" \
@@ -163,15 +166,54 @@ grep -rlEi "Math\.(sin|cos|sqrt|pow|log)|sigmoid|entropy" "<ROOT>" \
   2>/dev/null || true
 ```
 
+**Non-technical signals (game design, narrative, creative):**
+```bash
+# Game design: mechanics, balancing, economy, progression
+grep -rlEi "balance|mechanic|progression|economy|reward|difficulty|spawn|loot|cooldown|damage.formula|exp.curve|drop.rate|level.cap" "<ROOT>" \
+  --exclude-dir=".git" --exclude-dir=".claude" --exclude-dir="node_modules" \
+  --exclude-dir="vendor" --exclude-dir="contrib" --exclude-dir="core" \
+  --exclude-dir=".godot" --exclude-dir=".gradle" \
+  2>/dev/null || true
+# World-building: lore, narrative, mythology, factions
+grep -rlEi "lore|mythology|faction|kingdom|cosmolog|backstory|timeline|chronicle|legend" "<ROOT>" \
+  --exclude-dir=".git" --exclude-dir=".claude" --exclude-dir="node_modules" \
+  --exclude-dir="vendor" --exclude-dir="contrib" --exclude-dir="core" \
+  --exclude-dir=".godot" --exclude-dir=".gradle" \
+  2>/dev/null || true
+# Design decisions and philosophy
+grep -rlEi "trade.off|why.not|instead.of|lesson.learned|retrospective|postmortem|decided|chose|rationale" "<ROOT>" \
+  --exclude-dir=".git" --exclude-dir=".claude" --exclude-dir="node_modules" \
+  --exclude-dir="vendor" --exclude-dir="contrib" --exclude-dir="core" \
+  --exclude-dir=".godot" --exclude-dir=".gradle" \
+  2>/dev/null || true
+```
+
+Also prioritize files with design-heavy extensions or names:
+```bash
+find "<ROOT>" -type f \( \
+  -iname "*.yml" -o -iname "*.yaml" -o -iname "*.json" \
+  -o -iname "*design*" -o -iname "*lore*" -o -iname "*balance*" \
+  -o -iname "*mechanic*" -o -iname "*rules*" -o -iname "*world*" \
+  -o -iname "*creature*" -o -iname "*quest*" -o -iname "*skill*" \
+  -o -iname "*item*" -o -iname "*class*" -o -iname "*spell*" \
+  -o -iname "CHANGELOG*" -o -iname "HISTORY*" -o -iname "DEVLOG*" \
+\) ! -path "*/.git/*" ! -path "*/node_modules/*" ! -path "*/vendor/*" \
+   ! -path "*/web/core/*" ! -path "*/modules/contrib/*" \
+   2>/dev/null || true
+```
+
 Files matching multiple signals → read first.
 
 ---
 
 ## Phase 4 — Read & Extract Concepts
 
-For each file, ask: **"Would a competent developer say 'obvious' or 'interesting — I wouldn't have thought of that'?"**
+For each file, ask TWO questions:
 
-If *interesting* → extract and assign scores (novelty, applicability, reusability). If *obvious* → skip.
+1. **Technical:** "Would a competent developer say 'obvious' or 'interesting — I wouldn't have thought of that'?"
+2. **Non-technical:** "Is there a game design decision, world-building structure, creative methodology, UX insight, or process lesson here that encodes hard-won experience?"
+
+If *interesting* on either axis → extract and assign scores (novelty, applicability, reusability). If *obvious* on both → skip.
 
 ### Dimensioni del punteggio (tutte su scala 1–3)
 
@@ -192,6 +234,8 @@ score = round(((novelty-1)*0.45 + (applicability-1)*0.35 + (reusability-1)*0.20)
 
 ### Categories
 
+**Technical categories:**
+
 | `category` | What qualifies |
 |------------|---------------|
 | `algoritmo` | Non-standard computation, custom data structure, formula from scratch, unexpected optimization |
@@ -201,6 +245,17 @@ score = round(((novelty-1)*0.45 + (applicability-1)*0.35 + (reusability-1)*0.20)
 | `decisione` | Why something non-standard was chosen — when the default would seem simpler |
 | `frammento` | Code so short and dense that quoting it is the most efficient representation (≤8 lines) |
 
+**Non-technical categories:**
+
+| `category` | What qualifies |
+|------------|---------------|
+| `game-design` | Game mechanics, balancing strategies, economy systems, progression loops, player psychology insights, difficulty curves, reward schedules. Must be a specific design *decision* with reasoning, not just "it's an RPG with levels". |
+| `world-building` | Lore systems, cosmologies, faction dynamics, narrative structures, character relationship models, mythology. Must have internal consistency or novel structure, not just flavor text. |
+| `design-philosophy` | Intentional trade-offs, architectural evolution across versions (e.g. why move from Node to Rust), lessons learned from failure, conscious rejection of standard approaches with reasoning. |
+| `ux-interaction` | Non-obvious UI patterns, accessibility strategies, feedback loops, information architecture decisions. Must solve a specific UX problem in a non-standard way. |
+| `process` | Development workflows, project management patterns, tooling decisions, team coordination strategies, CI/CD philosophies. Must encode hard-won experience, not standard agile/scrum. |
+| `creative-vision` | Art direction choices, aesthetic systems, visual language rules, procedural generation philosophies, style guides with reasoning. Must articulate *why* specific creative choices were made. |
+
 ### Tag taxonomy
 
 Tags must be lowercase kebab-case. Use atomic tags, not compound ones:
@@ -208,11 +263,17 @@ Tags must be lowercase kebab-case. Use atomic tags, not compound ones:
 - Subsystem: `views`, `twig`, `webpack`, `docker`, `nginx`, `cron`
 - Concept: `caching`, `auth`, `form-api`, `migrations`, `config-api`, `hooks`
 - Domain: `performance`, `security`, `ui`, `api`, `cli`, `testing`
+- Game design: `game-mechanics`, `balancing`, `economy`, `progression`, `combat`, `rpg`, `tcg`, `roguelike`, `mmo`
+- Creative: `world-building`, `narrative`, `lore`, `art-direction`, `procedural-generation`
+- Process: `workflow`, `methodology`, `tooling`, `architecture-evolution`
 
 Never: `drupal-views` (split into `drupal` + `views`), CamelCase, project names as concept tags (use `PROJECT_TAG` instead).
 
 ### Not worth extracting
-Standard CRUD, libraries used as intended, boilerplate, self-evident config, standard patterns used standardly, anything a competent developer arrives at in <5 minutes.
+
+**Technical:** Standard CRUD, libraries used as intended, boilerplate, self-evident config, standard patterns used standardly, anything a competent developer arrives at in <5 minutes.
+
+**Non-technical:** Generic genre descriptions ("it's an RPG"), obvious game mechanics ("players gain XP"), standard UI layouts, placeholder lore without internal structure, TODO lists without reasoning. The bar is the same: would someone with domain experience say "interesting" or "obvious"?
 
 ### Per-concept deduplication (cross-project)
 
@@ -237,7 +298,12 @@ Compare each extracted concept against ALL notes in `KNOWN_NOTES` (entire vault,
 
 ## Phase 5 — Native Files
 
-View each NATIVE file with Read tool. Extract a note only if the file contains original creative work with non-obvious choices. Generic images, icons, screenshots: no note.
+View each NATIVE file with Read tool. Extract a note if:
+- **Technical:** diagrams, architecture charts, flow diagrams with non-obvious structure
+- **Creative:** concept art showing a coherent art direction or visual language system, character design sheets with systematic rules, world maps with internal geographic logic
+- **Design:** game design documents (PDF/images) with mechanics, balancing tables, progression curves
+
+Skip: generic images, icons, screenshots, placeholder art, stock assets.
 
 ---
 
@@ -287,9 +353,10 @@ pass: CURRENT_PASS
 **Perché non-ovvio:** [Alternativa default e perché questa è diversa.]
 
 **Ricostruzione:**
-[Pseudocodice ≤8 righe. Obbligatorio per `algoritmo` e `frammento`. Opzionale per `hack` (includi se la sequenza è non-ovvia). Ometti per `conoscenza-di-dominio` e `decisione` (la prosa è sufficiente).]
+[Per categorie tecniche: pseudocodice ≤8 righe. Obbligatorio per `algoritmo` e `frammento`. Opzionale per `hack` (includi se la sequenza è non-ovvia). Ometti per `conoscenza-di-dominio` e `decisione` (la prosa è sufficiente).]
+[Per categorie non-tecniche: descrizione strutturata del sistema/decisione. Per `game-design`: il loop/meccanica con parametri chiave. Per `world-building`: la struttura narrativa/cosmologica. Per `design-philosophy`: il trade-off e le alternative scartate. Per `creative-vision`: le regole estetiche. Ometti per `process` se la prosa è sufficiente.]
 
-**Quando riapplicare:** [Una frase: in quale scenario futuro questa soluzione torna utile. Ometti per `frammento` e `conoscenza-di-dominio`.]
+**Quando riapplicare:** [Una frase: in quale scenario futuro questa soluzione/insight torna utile. Ometti per `frammento` e `conoscenza-di-dominio`.]
 
 ---
 *Vedi anche: [[related-slug]] · [[other-slug]]*
@@ -297,7 +364,7 @@ pass: CURRENT_PASS
 (Se nessun candidato: ometti sia `see_also` dal frontmatter che la riga `Vedi anche` dal corpo)
 
 Note:
-- `CATEGORY`: scegli uno tra `algoritmo`, `pattern-architetturale`, `hack`, `conoscenza-di-dominio`, `decisione`, `frammento`
+- `CATEGORY`: scegli uno tra `algoritmo`, `pattern-architetturale`, `hack`, `conoscenza-di-dominio`, `decisione`, `frammento`, `game-design`, `world-building`, `design-philosophy`, `ux-interaction`, `process`, `creative-vision`
 - `source` is always a YAML list (even with one item) — avoids type mutation on future FOUND_IN updates
 - `tags` always ends with `PROJECT_TAG` — enables Obsidian tag panel navigation by project
 - `see_also` in frontmatter: plain slugs (no brackets) — for Dataview queries
@@ -311,11 +378,11 @@ Note:
 ```
 Update frontmatter: `updated: YYYY-MM-DD`. Raise any score dimension (`novelty`, `applicability`, `reusability`) if the new information justifies it; recalculate `score` if any dimension changes. Add `PROJECT_TAG` to `tags` if not already present. If note is missing `applicability`, `reusability`, or `score`, add them now (estimated from context).
 
-**Cross-project notes (FOUND_IN):** update existing file frontmatter:
+**Cross-project notes (FOUND_IN):** Read the existing file first, then use Edit to update frontmatter:
 - Add `PROJECT_NAME` to `found_in` array if not already present
 - Add `PROJECT_TAG` to `tags` array if not already present
 - Add current source path to `source` list if not already present
-- Update `updated: YYYY-MM-DD`
+- **Replace** the existing `updated:` line (whether empty or with a date) with `updated: YYYY-MM-DD` — do NOT add a second `updated:` line. Use Edit with the old `updated:` value (including empty) as `old_string`.
 - If usage context differs meaningfully, append:
 ```markdown
 
@@ -451,3 +518,4 @@ Tracciato nel frontmatter di `_index/<PROJECT_NAME>.md`:
 22. **`concepts:` conta tutto il vault, non solo i CREATE.** Il valore è `grep -rl "found_in:.*\"PROJECT_NAME\"" notes/ | wc -l`. Include note CREATE di questo progetto, FOUND_IN ricevuti da altri progetti, e EXTEND. Non calcolarlo come `N_PROJECT_NOTES + nuovi_CREATE` — quella formula non conta i FOUND_IN ricevuti.
 23. **`3` richiede giustificazione difendibile.** Prima di assegnare 3 in qualsiasi dimensione, formulare mentalmente la frase: *"È un 3 perché..."*. Se la frase è vaga o incerta, è un 2. Il dubbio va sempre verso il basso.
 24. **Portabilità: comandi bash devono funzionare su Linux, macOS e Windows (Git Bash).** Usare `-E` (ERE) per alternazioni (`|`), mai BRE `\|` (macOS BSD grep non lo supporta). Usare `|| true` su `find` e `grep -rl` che possono uscire con codice non-zero quando non trovano nulla. Mai `grep -P` (PCRE) — macOS BSD grep non lo supporta.
+25. **No campi YAML duplicati nel frontmatter.** Prima di aggiungere o aggiornare un campo (`updated`, `tags`, `found_in`, ecc.), Read il file e usa Edit per **sostituire** la riga esistente. Non aggiungere mai una seconda riga con lo stesso nome campo — YAML prende solo l'ultima, Obsidian/Dataview possono rompersi. Questo vale per FOUND_IN, EXTEND, e qualsiasi modifica a note esistenti.
