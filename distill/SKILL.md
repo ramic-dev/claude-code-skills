@@ -9,7 +9,7 @@ description: Extract and document all unique ideas, algorithms, patterns, and no
   vault, compatible with Obsidian + Dataview. Supports multiple passes and
   cross-project deduplication: if the same concept appears in two projects, one
   canonical note grows with found_in rather than duplicating.
-version: 10.0.0
+version: 10.1.0
 context: fork
 agent: general-purpose
 allowed-tools: Read, Grep, Glob, Bash, Write, Edit
@@ -74,7 +74,7 @@ grep -rh "^title:" "<VAULT_PATH>/notes/" 2>/dev/null
 grep -rh "^found_in:" "<VAULT_PATH>/notes/" 2>/dev/null
 
 # categories and scores
-grep -rh "^\(category\|score\|novelty\|applicability\|reusability\):" "<VAULT_PATH>/notes/" 2>/dev/null
+grep -rhE "^(category|score|novelty|applicability|reusability):" "<VAULT_PATH>/notes/" 2>/dev/null
 ```
 Build `KNOWN_NOTES` map (slug → {title, found_in, category, score}) from grep output alone — without opening individual files. Only open a specific note file if you need to verify a potential FOUND_IN/EXTEND match during Phase 4.
 
@@ -94,12 +94,13 @@ Print: `Passata N | Note vault totali: N_VAULT_TOTAL | Già da questo progetto: 
 
 ```bash
 find "<ROOT>" -type f \
-  ! -path "*/.git/*" \
+  ! -path "*/.git/*" ! -path "*/.claude/*" \
   ! -path "*/node_modules/*" ! -path "*/__pycache__/*" \
   ! -path "*/dist/*" ! -path "*/build/*" \
   ! -path "*/vendor/*" \
   ! -path "*/.next/*" ! -path "*/.venv/*" ! -path "*/venv/*" \
   ! -path "*/target/*" ! -path "*/.gradle/*" ! -path "*/coverage/*" \
+  ! -path "*/.godot/*" ! -path "*/.vs/*" \
   ! -path "*/web/core/*" ! -path "*/docroot/core/*" ! -path "*/html/core/*" \
   ! -path "*/web/vendor/*" ! -path "*/docroot/vendor/*" \
   ! -path "*/modules/contrib/*" ! -path "*/themes/contrib/*" \
@@ -111,7 +112,7 @@ find "<ROOT>" -type f \
 - **SKIP:** lock files, minified (`*.min.js *.min.css`), source maps (`*.map`), empty files, auto-generated (first 8 lines: `THIS FILE IS AUTO-GENERATED` / `DO NOT EDIT` / `@generated`), licenses (`LICENSE* COPYING*`), fonts (`.ttf .otf .woff .woff2`), compiled (`.o .pyc .class`), vector graphics (`.svg`), data files (`.csv .tsv` >10KB, all `.sql` files), binary-embedded XML (`.xlsx .docx .pptx`)
   - Size check: `wc -c < "<path>" 2>/dev/null` → if result >10240 → SKIP
 - **NATIVE:** `.pdf .jpg .jpeg .png .webp .gif`
-- **Unknown extension:** `head -c 512 "<path>" 2>/dev/null | LC_ALL=C grep -cP '\x00'` → 0 = TEXT, >0 = SKIP
+- **Unknown extension:** `head -c 512 "<path>" 2>/dev/null | LC_ALL=C grep -c $'\x00'` → 0 = TEXT, >0 = SKIP (no `-P` flag — macOS BSD grep lacks PCRE)
 - **TEXT:** everything else
 
 Print: `Da leggere: N_TEXT testo + N_NATIVE immagini/PDF | Saltati: N_SKIP`
@@ -126,34 +127,40 @@ find "<ROOT>" -type f \( \
   -iname "README*" -o -iname "ARCHITECTURE*" -o -iname "DESIGN*" \
   -o -iname "DECISIONS*" -o -iname "ADR*" \
   -o -path "*/docs/*" -o -path "*/doc/*" -o -path "*/decisions/*" \
-\) ! -path "*/.git/*" ! -path "*/node_modules/*" ! -path "*/vendor/*" \
+\) ! -path "*/.git/*" ! -path "*/.claude/*" ! -path "*/node_modules/*" ! -path "*/vendor/*" \
+   ! -path "*/.godot/*" ! -path "*/.gradle/*" \
    ! -path "*/web/core/*" ! -path "*/docroot/core/*" \
    ! -path "*/modules/contrib/*" ! -path "*/themes/contrib/*" \
-   2>/dev/null
+   2>/dev/null || true
 ```
 
 Then scan for high-signal code patterns. Note: `--exclude-dir` matches directory **names**, not paths — use short names:
 ```bash
-grep -rl "HACK:\|WORKAROUND:\|monkey.patch\|kludge" "<ROOT>" \
-  --exclude-dir=".git" --exclude-dir="node_modules" --exclude-dir="vendor" \
-  --exclude-dir="contrib" --exclude-dir="core" \
-  2>/dev/null
-grep -rl "algorithm\|heuristic\|approximat\|theorem\|invariant" "<ROOT>" -i \
-  --exclude-dir=".git" --exclude-dir="node_modules" --exclude-dir="vendor" \
-  --exclude-dir="contrib" --exclude-dir="core" \
-  2>/dev/null
-grep -rl "EXPERIMENTAL\|POC\|WIP\|DRAFT\|SPIKE" "<ROOT>" -i \
-  --exclude-dir=".git" --exclude-dir="node_modules" --exclude-dir="vendor" \
-  --exclude-dir="contrib" --exclude-dir="core" \
-  2>/dev/null
-grep -rl "eval\|Function(\|__import__\|ctypes\|FFI\|unsafe" "<ROOT>" \
-  --exclude-dir=".git" --exclude-dir="node_modules" --exclude-dir="vendor" \
-  --exclude-dir="contrib" --exclude-dir="core" \
-  2>/dev/null
-grep -rl "Math\.\(sin\|cos\|sqrt\|pow\|log\)\|sigmoid\|entropy" "<ROOT>" -i \
-  --exclude-dir=".git" --exclude-dir="node_modules" --exclude-dir="vendor" \
-  --exclude-dir="contrib" --exclude-dir="core" \
-  2>/dev/null
+grep -rlE "HACK:|WORKAROUND:|monkey.patch|kludge" "<ROOT>" \
+  --exclude-dir=".git" --exclude-dir=".claude" --exclude-dir="node_modules" \
+  --exclude-dir="vendor" --exclude-dir="contrib" --exclude-dir="core" \
+  --exclude-dir=".godot" --exclude-dir=".gradle" \
+  2>/dev/null || true
+grep -rlEi "algorithm|heuristic|approximat|theorem|invariant" "<ROOT>" \
+  --exclude-dir=".git" --exclude-dir=".claude" --exclude-dir="node_modules" \
+  --exclude-dir="vendor" --exclude-dir="contrib" --exclude-dir="core" \
+  --exclude-dir=".godot" --exclude-dir=".gradle" \
+  2>/dev/null || true
+grep -rlEi "EXPERIMENTAL|POC|WIP|DRAFT|SPIKE" "<ROOT>" \
+  --exclude-dir=".git" --exclude-dir=".claude" --exclude-dir="node_modules" \
+  --exclude-dir="vendor" --exclude-dir="contrib" --exclude-dir="core" \
+  --exclude-dir=".godot" --exclude-dir=".gradle" \
+  2>/dev/null || true
+grep -rlE "eval|Function\(|__import__|ctypes|FFI|unsafe" "<ROOT>" \
+  --exclude-dir=".git" --exclude-dir=".claude" --exclude-dir="node_modules" \
+  --exclude-dir="vendor" --exclude-dir="contrib" --exclude-dir="core" \
+  --exclude-dir=".godot" --exclude-dir=".gradle" \
+  2>/dev/null || true
+grep -rlEi "Math\.(sin|cos|sqrt|pow|log)|sigmoid|entropy" "<ROOT>" \
+  --exclude-dir=".git" --exclude-dir=".claude" --exclude-dir="node_modules" \
+  --exclude-dir="vendor" --exclude-dir="contrib" --exclude-dir="core" \
+  --exclude-dir=".godot" --exclude-dir=".gradle" \
+  2>/dev/null || true
 ```
 
 Files matching multiple signals → read first.
@@ -443,3 +450,4 @@ Tracciato nel frontmatter di `_index/<PROJECT_NAME>.md`:
 21. **Index: leggi prima di scrivere.** Se `_index/<PROJECT_NAME>.md` esiste, aprilo con Read e usa Edit per aggiornare solo i campi che cambiano. Non usare Write o bash redirection su un index esistente — distrugge lo Storico delle passate precedenti.
 22. **`concepts:` conta tutto il vault, non solo i CREATE.** Il valore è `grep -rl "found_in:.*\"PROJECT_NAME\"" notes/ | wc -l`. Include note CREATE di questo progetto, FOUND_IN ricevuti da altri progetti, e EXTEND. Non calcolarlo come `N_PROJECT_NOTES + nuovi_CREATE` — quella formula non conta i FOUND_IN ricevuti.
 23. **`3` richiede giustificazione difendibile.** Prima di assegnare 3 in qualsiasi dimensione, formulare mentalmente la frase: *"È un 3 perché..."*. Se la frase è vaga o incerta, è un 2. Il dubbio va sempre verso il basso.
+24. **Portabilità: comandi bash devono funzionare su Linux, macOS e Windows (Git Bash).** Usare `-E` (ERE) per alternazioni (`|`), mai BRE `\|` (macOS BSD grep non lo supporta). Usare `|| true` su `find` e `grep -rl` che possono uscire con codice non-zero quando non trovano nulla. Mai `grep -P` (PCRE) — macOS BSD grep non lo supporta.

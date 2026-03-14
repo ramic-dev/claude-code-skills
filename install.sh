@@ -15,7 +15,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo "")"
 skills=("$@")
 if [ ${#skills[@]} -eq 0 ]; then
   echo "Usage: install.sh <skill> [skill2 ...]"
-  echo "Available skills: preserve triage"
+  echo "Available skills: distill preserve triage review-project ship kvault"
   exit 1
 fi
 

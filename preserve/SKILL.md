@@ -6,7 +6,7 @@ description: Scan every file in a project directory and generate a preservation 
   preservation report", "document what's worth keeping", "audit project knowledge", or
   wants to catalog experimental/prototype/domain-specific content before a migration,
   cleanup, or handoff.
-version: 6.0.0
+version: 6.4.0
 context: fork
 agent: general-purpose
 allowed-tools: Read, Grep, Glob, Bash, Write
@@ -16,6 +16,8 @@ argument-hint: [path]
 You are running the **preserve** skill. Scan a project directory, read every file you can, evaluate each for uniqueness and rarity, and produce `preservation-report.md` identifying the content most worth saving before it is lost.
 
 Complete all 9 phases in order. Never ask clarifying questions — work autonomously.
+
+**Portability:** all bash commands must work on Linux, macOS, AND Windows (Git Bash). Use `|| true` on any command that may exit non-zero when nothing matches (ls globs, find, gh). Use `find -print0 | xargs -0` instead of `xargs -d '\n'` (macOS xargs doesn't support `-d`).
 
 **If context pressure forces abbreviation**, prioritize in this order: (1) write the report, (2) TOP 10 entries, (3) score breakdowns, (4) inventory tables, (5) Summary Observations, (6) Recommendations. Never skip Phase 1, 8, or 9.
 
@@ -28,7 +30,8 @@ Complete all 9 phases in order. Never ask clarifying questions — work autonomo
 - If path invalid: stop and tell the user
 
 **Checkpoint:** `test -f "<ROOT>/.preserve-progress.json" && cat "<ROOT>/.preserve-progress.json" | head -5`
-- If timestamp < 4h ago: print `Resuming from Phase <N+1>...` and skip completed phases
+- If `version` field differs from current skill version (`6.4.0`): print `Checkpoint from older version, starting fresh` and delete it
+- If timestamp < 4h ago and version matches: print `Resuming from Phase <N+1>...` and skip completed phases
 - If timestamp ≥ 4h: print `Stale checkpoint, starting fresh` and delete it
 
 **Previous report:** `test -f "<ROOT>/preservation-report.md" && grep "^\*\*Generated" "<ROOT>/preservation-report.md" | head -1`
@@ -47,6 +50,7 @@ find "<ROOT>" -type f \
   ! -path "*/.next/*" ! -path "*/.venv/*" ! -path "*/venv/*" \
   ! -path "*/.tox/*" ! -path "*/coverage/*" ! -path "*/.nyc_output/*" \
   ! -path "*/.cache/*" ! -path "*/target/*" ! -path "*/.gradle/*" \
+  ! -path "*/.godot/*" ! -path "*/.claude/*" \
   2>/dev/null | sort
 ```
 
@@ -57,24 +61,35 @@ Store count as `N_TOTAL`. Choose strategy:
 
 **Git detection:** `git -C "<ROOT>" rev-parse --git-dir 2>/dev/null && echo yes || echo no` → store as `IS_GIT_REPO`
 
-**Cost estimate:** sample `head -50 <text-files> | xargs wc -l` to get `avg_lines`. Then:
+**Mixed-purpose detection:** check if ROOT contains both source and runtime artifacts in the same directory:
+```bash
+find "<ROOT>" -maxdepth 3 -type d 2>/dev/null | while IFS= read -r d; do
+  [ "$d" = "<ROOT>" ] && continue
+  has_source=$(find "$d" -maxdepth 1 -type f \( -name "*.md" -o -name "*.py" -o -name "*.js" -o -name "*.php" -o -name "*.yml" \) 2>/dev/null | head -1)
+  has_runtime=$(find "$d" -maxdepth 1 -type f \( -name "*.db" -o -name "*.sqlite" -o -name "*.log" -o -name "*.pid" \) 2>/dev/null | head -1)
+  [ -n "$has_source" ] && [ -n "$has_runtime" ] && echo "MIXED: $d/"
+done || true
+```
+If mixed-purpose directories are found, note them in the Summary Observations section of the report: these directories risk accidentally committing runtime artifacts and should have `.gitignore` rules added.
+
+**Cost estimate:** sample `find ... -print0 2>/dev/null | xargs -0 -r wc -l 2>/dev/null | head -50` to get `avg_lines`. Then:
 - `full_read_sec = avg_lines / 350` per file · `strategic = 2s` · `native = 10s`
 - Print: `Strategy: X | ~<N_full> full + <N_strategic> strategic + <N_native> native reads | ~<X>–<Y> min`
 - If total > 900s: warn `⚠ Large project — scan may take 15+ minutes`
 
-Save checkpoint: `{ "version":"6.0.0", "root":"<ROOT>", "phase_completed":2, "strategy":"<S>", "is_git_repo":<bool>, "scored_files":[], "timestamp":"<ISO>" }` → `<ROOT>/.preserve-progress.json`
+Save checkpoint: `{ "version":"6.4.0", "root":"<ROOT>", "phase_completed":2, "strategy":"<S>", "is_git_repo":<bool>, "scored_files":[], "timestamp":"<ISO>" }` → `<ROOT>/.preserve-progress.json`
 
 ---
 
 ## Phase 3 — Partition Files by Type
 
 **UNREADABLE** (do NOT read):
-- Executables/libs: `.exe .dll .so .dylib .obj .o .a .lib .bin .com .sys .msi .app`
+- Executables/libs: `.exe .dll .so .dylib .obj .o .a .lib .bin .com .sys .msi .app .apk .pck`
 - Archives: `.zip .tar .gz .tgz .bz2 .7z .rar .xz .cab .iso .dmg .pkg .deb .rpm`
 - Audio: `.mp3 .wav .flac .ogg .aac .wma .m4a .opus .mid .midi`
 - Video: `.mp4 .avi .mov .mkv .wmv .flv .webm .m4v .3gp .ts`
 - Binary images: `.ico .cur .xcf .psd .psb .raw .cr2 .nef .arw .dng`
-- Design: `.ai .sketch .fig .xd .indd .eps .svgz`
+- Design/3D: `.ai .sketch .fig .xd .indd .eps .svgz .glb .gltf .blend`
 - Office: `.docx .xlsx .pptx .doc .xls .ppt .odt .ods .odp .pages .numbers .key`
 - Database: `.db .sqlite .sqlite3 .mdb .accdb .frm .ibd`
 - Bytecode: `.pyc .pyo .class .wasm .beam .luac .elc`
@@ -88,9 +103,11 @@ Save checkpoint: `{ "version":"6.0.0", "root":"<ROOT>", "phase_completed":2, "st
 
 **Unknown/missing extension heuristic:** do NOT use `file` command — it misclassifies proprietary JSON formats (`.dam`, `.scene`, `.ron`) as binary. Instead:
 ```bash
-head -c 512 "<path>" 2>/dev/null | LC_ALL=C grep -cP '\x00'
+LC_ALL=C tr -d '\0' < <(head -c 512 "<path>" 2>/dev/null) | wc -c
+# Compare with: wc -c < <(head -c 512 "<path>" 2>/dev/null)
 ```
-- Result `0` → TEXT · Result `> 0` → UNREADABLE · Command fails → UNREADABLE (`Read probe failed`)
+- If both byte counts are equal → TEXT (no null bytes) · If stripped count < original → UNREADABLE (contains null bytes) · Command fails → UNREADABLE (`Read probe failed`)
+- **Portability note:** do NOT use `grep -P` (macOS grep lacks `-P`). The `tr -d '\0'` approach works on Linux, macOS, and Git Bash.
 
 **Classification is final:** once a file is assigned TEXT (null-byte check passes + Read succeeds), it stays TEXT permanently. It must appear ONLY in the "Text Files Analyzed" table — never in "Unreadable Files". If the file's *content* contains embedded binary data (base64 blobs, encoded fields, binary-in-JSON), that is content to analyze, not a reason to reclassify. The Unreadable table is for files that CANNOT be read, not for files whose content happens to encode binary data.
 
@@ -105,7 +122,7 @@ Mark as **SKIPPED** (do not read or score):
 - **Minified:** `*.min.js *.min.css *-min.js *-min.css`
 - **Source maps:** `*.map`
 - **Generated `.d.ts`:** only if matching `.ts` exists in same directory
-- **Empty:** `find "<ROOT>" -empty -type f 2>/dev/null`
+- **Empty:** `find "<ROOT>" -empty -type f 2>/dev/null || true`
 - **Auto-generated content** (check first 8 lines): `THIS FILE IS AUTO-GENERATED`, `DO NOT EDIT`, `Code generated by`, `@generated`, `# AUTOGENERATED`, `// Generated by`
 
 Record each with reason: `Lock file` / `Minified` / `Auto-generated` / `Empty` / `Source map`
@@ -130,6 +147,8 @@ Run these Grep searches across all TEXT files (`output_mode: files_with_matches`
 | D | Legal/financial (ci+ctx)* | `compliance\|liability\|arbitrage\|ledger\|amortiz\|collateral` | +2 |
 | D | Engineering/sci (ci+ctx)* | `torque\|resonance\|impedance\|oscillat\|viscosity\|eigenvalue` | +2 |
 | E | Prompt templates | `\{\{.+\}\}\|\[INST\]\|system_prompt` | +2 |
+
+> **Note (Group E, `{{ }}` pattern):** Exclude `.twig`, `.jinja2`, `.j2`, `.hbs`, `.mustache`, `.html` files from this pattern — `{{ }}` is standard template syntax in Twig, Jinja2, Handlebars, and Angular, NOT an LLM prompt indicator. Only match `{{ }}` in `.txt`, `.md`, `.py`, `.js`, `.ts` files.
 | E | Seeds/generative | `random_seed\|seed=\|np\.random\|torch\.manual_seed\|faker` | +1 |
 | F | Rust unsafe | `unsafe\s*\{` | +2 |
 | F | Python metaprogramming | `__slots__\|__init_subclass__\|__class_getitem__` | +2 |
@@ -235,6 +254,13 @@ Record: `{ path, category, read_mode, lines, score, score_breakdown, key_finding
 **Ranking:** sort by score desc. Ties: (1) higher line count → (2) fewer path segments from ROOT → (3) alphabetical.
 
 **Category cap:** max 4 NATIVE (PDF/image) slots in TOP 10. If more than 4 NATIVE files rank naturally, keep the 4 highest-scoring and fill remaining slots with next-best TEXT files.
+
+**Vault cross-reference (optional):** if a vault exists at `D:/knowledge` (or a user-specified path), spot-check whether top-scored concepts are already captured:
+```bash
+# Quick vault cross-reference for top findings
+grep -rl "<keyword-from-finding>" "D:/knowledge/notes/" 2>/dev/null | head -3 || true
+```
+If a finding is already in the vault, add a note in the report: `[already in vault: <slug> (score N)]`. This helps the user know which rare content is already safe and which still needs preservation. Keep this lightweight — just grep for key terms from each top entry, don't read every note.
 
 After applying category cap, select top 10. If fewer than 10 candidates remain (due to cap, deduplication, or low total scored files), include all available — never pad with empty or placeholder entries. Adjust the report header to match the actual count: write `## TOP 7 MOST VALUABLE ITEMS` if only 7 qualify. Note the shortfall in the report header line: `*(category cap reduced pool — N/10 slots filled)*`.
 
