@@ -208,12 +208,21 @@ Files matching multiple signals → read first.
 
 ## Phase 4 — Read & Extract Concepts
 
-For each file, ask TWO questions:
+For each file, ask THREE questions — and treat each independently:
 
 1. **Technical:** "Would a competent developer say 'obvious' or 'interesting — I wouldn't have thought of that'?"
-2. **Non-technical:** "Is there a game design decision, world-building structure, creative methodology, UX insight, or process lesson here that encodes hard-won experience?"
+2. **Non-technical (content):** "Is there a game design decision, world-building structure, creative methodology, UX insight, or narrative structure here that encodes hard-won experience?"
+3. **Non-technical (meta):** "Does the overall project architecture, constraint philosophy, UX strategy, distribution model, or development process encode a transferable lesson?"
 
-If *interesting* on either axis → extract and assign scores (novelty, applicability, reusability). If *obvious* on both → skip.
+**CRITICAL — anti-technical-bias rule:** After extracting all technical concepts from the project, STOP and do a dedicated non-technical pass. Re-read the project's README and main files asking ONLY questions 2 and 3. Look specifically for:
+- **`design-philosophy`**: intentional constraints (e.g. "zero install", "no admin required"), trade-offs with reasoning, why standard approaches were rejected
+- **`process`**: development workflows, distribution strategies, update mechanisms as process patterns
+- **`ux-interaction`**: adaptive UI that responds to environment (e.g. showing/hiding features based on detected capabilities), progressive disclosure, graceful degradation
+- **`creative-vision`**: aesthetic systems, naming conventions with reasoning, user experience goals that shaped technical decisions
+
+A project with 10 technical notes and 0 non-technical notes is almost certainly under-extracted. The ratio should reflect the project's actual knowledge content, not the ease of spotting code patterns.
+
+If *interesting* on any axis → extract and assign scores (novelty, applicability, reusability). If *obvious* on all three → skip.
 
 ### Dimensioni del punteggio (tutte su scala 1–3)
 
